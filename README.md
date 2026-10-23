@@ -1,5 +1,7 @@
 # m2ts-encoder
 
+📖 **見やすい使い方ガイド(Webページ)**: https://tatata17.github.io/m2ts-encoder/
+
 TV録画(`.m2ts` / `.rpls`)を **一覧表示 → 設定を割り当て → まとめてエンコード → チャンネル別に仕分け** できる、Windows用の小さなツールです。
 Python(tkinter)で動く **`m2ts_encoder.pyw` 1つだけ** で動作します(インストール不要)。
 

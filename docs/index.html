@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>m2ts エンコーダー 使い方</title>
+<meta name="description" content="TV録画(.m2ts)を一覧表示・まとめてエンコード・チャンネル別に仕分けできるWindows用ツールの使い方">
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#1d2430; --muted:#5d6877; --line:#dde2ea;
+  --accent:#0f7b8a; --accent-ink:#ffffff; --accent-soft:#e3f3f5; --warn:#fff4dc; --warn-line:#ecd29a;
+  --code:#eef1f5; --shadow:0 1px 2px rgba(20,30,50,.06),0 6px 20px rgba(20,30,50,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f141b; --panel:#171e28; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+    --accent:#4cc3d3; --accent-ink:#06222a; --accent-soft:#12303a; --warn:#2c2616; --warn-line:#6d5a22;
+    --code:#202a37; --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f141b; --panel:#171e28; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+  --accent:#4cc3d3; --accent-ink:#06222a; --accent-soft:#12303a; --warn:#2c2616; --warn-line:#6d5a22;
+  --code:#202a37; --shadow:none;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:72px}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.85 "Yu Gothic UI","Hiragino Sans","Meiryo",system-ui,sans-serif;-webkit-text-size-adjust:100%}
+a{color:var(--accent)}
+code,kbd{font:.9em/1.4 "Cascadia Mono",Consolas,monospace;background:var(--code);padding:.1em .4em;border-radius:5px}
+pre{background:var(--code);padding:14px 16px;border-radius:10px;overflow:auto;line-height:1.6;font:14px/1.6 "Cascadia Mono",Consolas,monospace}
+pre code{background:none;padding:0}
+header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--panel) 92%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1120px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px}
+.brand{font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.brand small{font-weight:400;color:var(--muted);margin-left:8px}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);
+  padding:8px 16px;border-radius:999px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px;line-height:1.4}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
+.icon-btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;width:38px;height:38px;cursor:pointer;font-size:16px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 16px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
+nav.toc{position:sticky;top:72px;align-self:start;max-height:calc(100vh - 90px);overflow:auto;padding:28px 0}
+nav.toc ol{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
+nav.toc a{display:block;padding:5px 12px;margin-left:-2px;border-left:2px solid transparent;color:var(--muted);text-decoration:none;font-size:14.5px;line-height:1.5}
+nav.toc a:hover{color:var(--ink)}
+nav.toc a.on{color:var(--accent);border-left-color:var(--accent);font-weight:700}
+main{padding:28px 0 80px;min-width:0}
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px 28px 24px;box-shadow:var(--shadow)}
+.hero h1{margin:0 0 6px;font-size:clamp(26px,4.5vw,36px);line-height:1.3}
+.hero p{margin:.4em 0;color:var(--muted)}
+.hero .row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px;align-items:center}
+.ver{font-size:14px;color:var(--muted)}
+.feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:18px 0 0;padding:0;list-style:none}
+.feat li{background:var(--accent-soft);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6}
+section{margin-top:44px}
+h2{font-size:24px;margin:0 0 14px;line-height:1.4;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h2 .n{display:inline-block;min-width:1.9em;height:1.9em;line-height:1.9em;text-align:center;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:.7em;margin-right:10px;vertical-align:.12em}
+h3{font-size:18px;margin:26px 0 8px}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:15px}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+tr:last-child td{border-bottom:none}
+th{background:var(--accent-soft);white-space:nowrap}
+.scroll{overflow-x:auto}
+.note{background:var(--warn);border:1px solid var(--warn-line);border-radius:12px;padding:12px 16px;margin:16px 0;font-size:15px}
+.steps{counter-reset:s;list-style:none;padding:0;margin:12px 0}
+.steps>li{counter-increment:s;position:relative;padding:4px 0 10px 44px}
+.steps>li::before{content:counter(s);position:absolute;left:0;top:3px;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:700}
+ul.tight{padding-left:1.3em}
+ul.tight li{margin:4px 0}
+/* 画面イメージ(説明用の図) */
+.mock{margin:18px 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);font-size:13px;line-height:1.5}
+.mock .bar{background:var(--code);padding:6px 12px;border-bottom:1px solid var(--line);color:var(--muted)}
+.mock .body{padding:12px;display:grid;gap:8px}
+.mock .menu span{margin-right:14px;color:var(--muted)}
+.mock .tabs span{display:inline-block;padding:3px 10px;border:1px solid var(--line);border-radius:6px 6px 0 0;margin-right:4px;color:var(--muted)}
+.mock .tabs span.on{background:var(--accent-soft);color:var(--ink);font-weight:700}
+.mock .list{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.mock .list div{display:grid;grid-template-columns:1.1fr 2.4fr 1.4fr 1.2fr .8fr;gap:6px;padding:3px 8px;border-bottom:1px solid var(--line)}
+.mock .list div:first-child{background:var(--code);font-weight:700}
+.mock .list div.sel{background:var(--accent-soft)}
+.mock .list div.ok{background:color-mix(in srgb,#2ea44f 18%,transparent)}
+.mock .list div.ng{background:color-mix(in srgb,#d73a49 12%,transparent)}
+.mock fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:6px 10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.mock legend{padding:0 6px;font-weight:700;color:var(--accent)}
+.mock .b{border:1px solid var(--line);border-radius:5px;padding:1px 9px;background:var(--panel)}
+.mock .b.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.mock .logbox{border:1px solid var(--line);border-radius:8px;background:var(--code);color:var(--muted);padding:6px 10px;font-family:Consolas,monospace;font-size:12px}
+.callouts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
+.callouts div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:14.5px;line-height:1.7}
+.callouts b{color:var(--accent)}
+footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var(--muted);font-size:14px}
+@media (max-width:820px){
+  .wrap{grid-template-columns:1fr;gap:0}
+  nav.toc{position:static;max-height:none;padding:14px 0 0}
+  nav.toc ol{display:flex;flex-wrap:wrap;gap:6px;border:none}
+  nav.toc a{border:1px solid var(--line);border-radius:999px;margin:0;padding:3px 12px;background:var(--panel)}
+  nav.toc a.on{border-color:var(--accent)}
+  .hero{padding:20px 18px}
+  .brand small{display:none}
+  .mock .list div{grid-template-columns:1fr 2fr 1.2fr}
+  .mock .list div span:nth-child(n+4){display:none}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand">m2ts エンコーダー<small>使い方ガイド</small></div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="https://github.com/tatata17/m2ts-encoder">GitHub</a>
+    <button class="icon-btn" id="theme" aria-label="ライト/ダークを切り替え" title="ライト/ダークを切り替え">◐</button>
+  </div>
+</header>
+
+<div class="wrap">
+<nav class="toc" aria-label="目次">
+  <ol>
+    <li><a href="#about">はじめに</a></li>
+    <li><a href="#install">用意するもの・起動</a></li>
+    <li><a href="#basic">基本の流れ</a></li>
+    <li><a href="#presets">エンコード設定</a></li>
+    <li><a href="#diag">診断とノイズ検査</a></li>
+    <li><a href="#sort">チャンネル別に仕分け</a></li>
+    <li><a href="#more">その他の機能</a></li>
+    <li><a href="#update">アップデート</a></li>
+    <li><a href="#trouble">困ったとき</a></li>
+  </ol>
+</nav>
+
+<main>
+<section class="hero" id="about" style="margin-top:0">
+  <h1>m2ts エンコーダー</h1>
+  <p>TV録画(<code>.m2ts</code> / <code>.rpls</code>)を、<b>一覧表示 → 設定を割り当て → まとめてエンコード → チャンネル別に仕分け</b>できる、Windows用の小さなツールです。<code>m2ts_encoder.pyw</code> 1つだけで動きます。</p>
+  <div class="row">
+    <a class="btn" id="dl" href="https://github.com/tatata17/m2ts-encoder/raw/main/m2ts_encoder.pyw">⬇ m2ts_encoder.pyw をダウンロード</a>
+    <span class="ver" id="ver">最新版を確認中…</span>
+  </div>
+  <ul class="feat">
+    <li>番組名・チャンネル・放送日を一覧表示</li>
+    <li>「おまかせ」で音声・字幕・インターレースを自動判定してエンコード</li>
+    <li>複数ファイルを上から順に自動処理(キュー)</li>
+    <li>エンコード結果を自動診断(ノイズ・破損・失敗)</li>
+    <li>エンコード済みをチャンネル別フォルダへ仕分け</li>
+    <li>メニューからワンクリックで最新版に更新</li>
+  </ul>
+</section>
+
+<section id="install">
+  <h2><span class="n">1</span>用意するもの・起動のしかた</h2>
+  <div class="scroll"><table>
+    <tr><th>もの</th><th>説明</th></tr>
+    <tr><td>Windows 10 / 11</td><td></td></tr>
+    <tr><td>Python 3</td><td>3.9以上を推奨。インストーラーで <b>「Add python.exe to PATH」</b> と、<code>.pyw</code> を関連付ける <b>「py launcher」</b> にチェックを入れてください。</td></tr>
+    <tr><td>ffmpeg / ffprobe</td><td>アプリと同じフォルダに置くか、PATHを通します。<code>ffprobe</code> は「おまかせ」の自動判定に使います。</td></tr>
+    <tr><td>rplsinfo.exe</td><td>同じフォルダに置くか、PATHを通します。番組名・チャンネル・放送日の取得に使います。</td></tr>
+    <tr><td>NVIDIAのGPU</td><td>既定のエンコード設定は <code>hevc_nvenc</code>(NVIDIAのハードウェアエンコード)を使います。</td></tr>
+  </table></div>
+  <ol class="steps">
+    <li><code>m2ts_encoder.pyw</code> をダウンロードして、好きなフォルダ(録画ファイルのあるフォルダでも可)に置く</li>
+    <li>同じフォルダに <code>rplsinfo.exe</code>(と、必要なら <code>ffmpeg.exe</code> / <code>ffprobe.exe</code>)を置く</li>
+    <li><code>m2ts_encoder.pyw</code> を<b>ダブルクリック</b>(コマンドプロンプトは開きません)</li>
+    <li>画面上部の「対象フォルダ」がそのフォルダになり、自動でスキャンが始まります</li>
+  </ol>
+  <p class="note">「ログ」「仕分け」フォルダも、<code>m2ts_encoder.pyw</code> と同じ場所に作られます。</p>
+</section>
+
+<section id="basic">
+  <h2><span class="n">2</span>基本の流れ(3ステップ)</h2>
+  <p>画面は、上から「<b>① 対象を選ぶ → ② 設定を決める → ③ 実行</b>」の順に並んでいます。</p>
+
+  <div class="mock" role="img" aria-label="アプリ画面のイメージ図">
+    <div class="bar">m2ts エンコーダー(録画番組名ビューア/エンコードキュー) — 画面のイメージ</div>
+    <div class="body">
+      <div class="menu"><span>ファイル</span><span>ツール</span><span>設定</span><span>ログ</span><span>ヘルプ</span></div>
+      <div class="tabs"><span class="on">m2ts(エンコード前・変換状況)</span><span>エンコード済み(mkv/mp4)</span></div>
+      <div>番組名で絞り込み: <span class="b" style="padding:1px 70px">&nbsp;</span> <span class="b">クリア</span></div>
+      <div class="list">
+        <div><span>元ファイル名</span><span>録画番組名</span><span>チャンネル</span><span>放送日</span><span>変換済み</span></div>
+        <div class="ok"><span>00001.m2ts</span><span>番組A #1</span><span>チャンネルX</span><span>2026/10/01</span><span>○</span></div>
+        <div class="sel ng"><span>00002.m2ts</span><span>番組A #2</span><span>チャンネルX</span><span>2026/10/08</span><span>×</span></div>
+        <div class="sel ng"><span>00003.m2ts</span><span>番組B</span><span>チャンネルY</span><span>2026/10/09</span><span>×</span></div>
+      </div>
+      <fieldset><legend>① 対象を選ぶ</legend><span class="b">全選択</span><span class="b">選択解除</span>チャンネルで選択 <span class="b">▼</span><span class="b">このチャンネルを選択</span></fieldset>
+      <fieldset><legend>② どの設定でエンコードするか決める</legend>適用する設定 <span class="b">おまかせ(自動判定) ▼</span><span class="b">選択した行に適用</span><span class="b">選択行の設定を解除</span><span class="b">すべて解除</span></fieldset>
+      <fieldset><legend>③ 実行</legend><span class="b go">エンコード開始</span><span class="b">中断</span>☑ エンコード後にノイズ検査する</fieldset>
+      <div><span class="b">▼ 実行ログ</span></div>
+      <div class="logbox">[自動判定] 音声 2本 / 字幕 1本 / インターレース扱い(bwdif) → 出力は MKV</div>
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:14px;margin-top:-6px">※ 実際の画面を単純化した説明用の図です。緑=変換済み、赤=未変換です。</p>
+
+  <h3>① 対象を選ぶ</h3>
+  <ul class="tight">
+    <li><b>クリック</b>で選択、<b>Ctrl+クリック</b>で1行ずつ追加、<b>Shift+クリック</b>で範囲選択(エクスプローラーと同じ操作感)。矢印キーやShift+矢印キーも使えます。</li>
+    <li><b>全選択 / 選択解除</b>ボタン。</li>
+    <li><b>チャンネルで選択</b>: プルダウンでチャンネルを選び「このチャンネルを選択」を押すと、そのチャンネルの未変換ファイルがまとめて選ばれます。「変換済みも含める」にチェックすると変換済みも対象になります。</li>
+    <li><b>番組名で絞り込み</b>: 入力すると、一致する行だけが表示されます。スペース区切りで複数語(すべて含むものだけ)。ひらがな/カタカナ、全角/半角、大文字/小文字は区別しません。対象は「番組名」と「ファイル名」です。</li>
+    <li>列の見出しをクリックすると、その列で並べ替えできます。</li>
+    <li>上部の「検索対象」で <code>.m2ts</code> / <code>.rpls</code> を切り替え、「サブフォルダも検索する」で下の階層も探します。</li>
+  </ul>
+
+  <h3>② どの設定でエンコードするか決める</h3>
+  <ol class="steps">
+    <li>「適用する設定」から選びます。まずは <b>「おまかせ(ファイルごとに自動判定)」</b> がおすすめです。</li>
+    <li>行を選んだ状態で <b>「選択した行に適用」</b> を押します(この時点ではまだエンコードは始まりません)。</li>
+    <li>間違えたら「選択行の設定を解除」、全部やり直すなら「すべて解除」。</li>
+  </ol>
+  <p class="note">割り当てた設定は、エンコードが終わると自動で解除されます。うっかり再エンコードしないための仕組みです。</p>
+
+  <h3>③ 実行</h3>
+  <ul class="tight">
+    <li><b>「エンコード開始」</b>で、設定を割り当てた行を、一覧の上から順に1つずつエンコードします。</li>
+    <li><b>「中断」</b>で止められます。実行中のffmpegもまとめて停止し、未完成の出力は削除します(合体の途中で止めた場合は、1回目の完成品を残します)。</li>
+    <li><b>「エンコード後にノイズ検査する」</b>: エンコード後に元のm2tsをソフト/CUDAの両方でデコードして比べ、ノイズの有無を番組情報のCSVに記録します。</li>
+    <li>画面下の<b>「実行ログ」</b>に経過が出ます(▼で折りたたみ可)。ログはエンコードごとに「ログ」フォルダへ自動保存されます。</li>
+  </ul>
+  <p>出力は元のm2tsと同じフォルダに、次の名前で保存されます。同名のファイルがあるときは上書きせず <code>(2)</code> を付けます。</p>
+  <pre><code>番組名,放送日.mkv (または .mp4)     例: アニメ「〇〇」#1,20260307.mkv</code></pre>
+</section>
+
+<section id="presets">
+  <h2><span class="n">3</span>エンコード設定</h2>
+  <p>メニュー「設定」→「エンコード設定...」で、チェックボックスから設定を作れます。</p>
+  <h3>おまかせ(推奨)</h3>
+  <p>ファイルごとにffprobeで中身を調べ、次を自動で決めます。</p>
+  <ul class="tight">
+    <li>空の字幕・存在しない音声を外す</li>
+    <li>解説放送の音声(2本目が極端に少ない場合)を判定し、タイトル「解説放送」を付ける</li>
+    <li>映像より先に途切れる音声・字幕、まばらな字幕(間が5分以上空く)は、エンコード後に元のm2tsから合体する(同時に入れるとエンコードが止まるため)</li>
+    <li>インターレース / プログレッシブを判定(CATVの60pはインターレース解除なし)</li>
+    <li>CATV(カートゥーン等)のモノラル二か国語を、主音声 / 副音声 / 主+副に分離</li>
+    <li>出力形式(字幕があればMKV、なければMP4)</li>
+  </ul>
+  <h3>手動の設定</h3>
+  <p>出力形式(mkv / mp4)、ARIB字幕、音声の扱い、インターレース解除(なし / yadif / bwdif)、QP値、CUDAデコード、hvc1タグなどを自分で選べます。「生成されるffmpegコマンド」欄で、実際に実行されるコマンドを確認できます。独自の <code>.bat</code> を使うときは、メニュー「設定」→「バッチファイル管理...」で追加します。</p>
+</section>
+
+<section id="diag">
+  <h2><span class="n">4</span>診断とノイズ検査</h2>
+  <ul class="tight">
+    <li>エンコードのたびに、ffmpegのログを自動解析して <b>OK / 要確認 / 失敗</b> を判定します。</li>
+    <li>一覧の「エンコード診断」列、または行を右クリック →「エンコード診断を見る」で、問題のあった時刻を確認できます。VLCでその位置から再生して見比べられます。</li>
+    <li>録画の先頭・末尾に出る無害なエラーや、一定間隔で出る無害な警告は無視します。</li>
+    <li>メニュー「ログ」→「エンコード診断結果を表示(全件)」で、全ファイルの診断を一覧できます。</li>
+    <li><b>ノイズ検査</b>: 元のm2tsをソフト/CUDAでデコードして比較し、結果を番組情報のCSVに追記します。</li>
+  </ul>
+  <p class="note">「要確認」でも、録画そのものが壊れている場合は直せません。VLCで元のm2tsと出力の両方を見比べて、元が壊れていないか確かめてください。</p>
+</section>
+
+<section id="sort">
+  <h2><span class="n">5</span>チャンネル別に仕分け</h2>
+  <p>エンコード済みのmkv/mp4と番組情報のCSVを、チャンネル名のフォルダへまとめます。</p>
+  <pre><code>(アプリと同じ場所)/仕分け/チャンネル名/番組名,放送日.mkv
+                                       番組名,放送日.csv</code></pre>
+  <ul class="tight">
+    <li>上のタブ「<b>エンコード済み(mkv/mp4)</b>」では、m2tsが無くなったmkv/mp4も、CSVのチャンネル名を読んで仕分けられます。</li>
+    <li>「選択した行をチャンネル別に仕分け」「未仕分けをすべて仕分け」のボタンで実行します。メニュー「ツール」からも実行できます。</li>
+  </ul>
+</section>
+
+<section id="more">
+  <h2><span class="n">6</span>その他の機能</h2>
+  <div class="callouts">
+    <div><b>変換済みm2tsを削除</b><br>メニュー「ツール」。変換済み(mkv/mp4がある)の元m2tsをまとめて削除します。mkv/mp4は削除しません。ノイズ検査が未完了・中断のものは対象になりません。</div>
+    <div><b>ファイル名の記号を全角に修正</b><br>過去の版で半角記号(<code>;</code> <code>@</code> <code>$</code> など)になったファイル名を、本来の全角へ戻します。</div>
+    <div><b>一覧をCSVに保存</b><br>メニュー「ファイル」から。</div>
+    <div><b>右クリックメニュー</b><br>ファイルの場所を開く / VLCで再生 / エンコード診断 / ノイズ検査 / rplsから番組情報を再取得(BDAV用)。</div>
+    <div><b>ログ</b><br>保存、フォルダを開く、<b>ログのtxtを1つにまとめる</b>(AIに渡すときに便利)、全削除。</div>
+    <div><b>ツールチップ</b><br>ボタンにマウスを置いて約1.5秒待つと、説明が出ます。</div>
+  </div>
+</section>
+
+<section id="update">
+  <h2><span class="n">7</span>アップデート</h2>
+  <p>メニュー「<b>ヘルプ</b>」→「<b>アップデートを確認...</b>」を押します。</p>
+  <ol class="steps">
+    <li>新しい版があれば、更新内容が表示されます。</li>
+    <li>「はい」を押すと、ダウンロード → 置き換え → 自動で再起動します。</li>
+    <li>置き換え前の版は <code>%LOCALAPPDATA%\m2ts_encoder\backup\</code> に自動バックアップされます(最新5個)。</li>
+  </ol>
+  <ul class="tight">
+    <li>エンコード中は更新できません。</li>
+    <li>起動時の自動確認は、同じメニューの「起動時に更新を確認する」で切り替えられます。</li>
+    <li>ダウンロードしたファイルは、版番号と構文を確認してから置き換えるので、通信が途中で切れても今の版は壊れません。</li>
+  </ul>
+  <h3>設定ファイルの場所</h3>
+  <p><code>%LOCALAPPDATA%\m2ts_encoder\</code> に、小さなJSONとして保存されます(登録したバッチ、VLCのパスなど)。旧名 <code>m2ts_info_viewer</code> の設定がある場合は、初回起動時に自動で引き継ぎます。</p>
+  <div id="notes"></div>
+</section>
+
+<section id="trouble">
+  <h2><span class="n">8</span>困ったとき</h2>
+  <div class="scroll"><table>
+    <tr><th>症状</th><th>対処</th></tr>
+    <tr><td>「rplsinfo.exe が見つかりません」</td><td><code>rplsinfo.exe</code> を <code>m2ts_encoder.pyw</code> と同じフォルダに置く</td></tr>
+    <tr><td>「おまかせ」の判定が出ない</td><td><code>ffprobe.exe</code> を同じフォルダに置くか、PATHを通す</td></tr>
+    <tr><td><code>.pyw</code> をダブルクリックしても開かない</td><td>Pythonを入れ直し、<code>py launcher</code> と <code>.pyw</code> の関連付けにチェックを入れる</td></tr>
+    <tr><td>エンコードの途中で止まって見える</td><td>字幕が非常にまばらな録画では、最後の「合体」で元のm2tsを読み進めるため、数分かかることがあります。ディスクの読み込みが動いていれば待ってください。</td></tr>
+    <tr><td>診断が「要確認」</td><td>診断の詳細で時刻を確認し、VLCで元のm2tsと出力の両方を見比べる</td></tr>
+    <tr><td>同名の <code>.mkv</code> が残っていてエンコードに失敗する</td><td>失敗や中断で残った <code>番組.m2ts.mkv</code> は、次のエンコード開始時に自動で削除されます</td></tr>
+  </table></div>
+</section>
+
+<footer>
+  <a href="https://github.com/tatata17/m2ts-encoder">github.com/tatata17/m2ts-encoder</a> ・ このページは <code>docs/index.html</code> から公開されています
+</footer>
+</main>
+</div>
+
+<script>
+(function(){
+  var root=document.documentElement;
+  try{var t=localStorage.getItem("theme");if(t)root.setAttribute("data-theme",t);}catch(e){}
+  document.getElementById("theme").addEventListener("click",function(){
+    var dark=root.getAttribute("data-theme")==="dark"||(!root.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme: dark)").matches);
+    var next=dark?"light":"dark";root.setAttribute("data-theme",next);
+    try{localStorage.setItem("theme",next);}catch(e){}
+  });
+  // 目次のハイライト
+  var links=[].slice.call(document.querySelectorAll("nav.toc a"));
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  if("IntersectionObserver" in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){
+      if(e.isIntersecting){links.forEach(function(a){a.classList.remove("on");});var a=map[e.target.id];if(a)a.classList.add("on");}
+    });},{rootMargin:"-20% 0px -70% 0px"});
+    Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)io.observe(el);});
+  }
+  // 最新版の表示とダウンロード
+  var base="https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/";
+  var ver=document.getElementById("ver");
+  fetch(base+"version.json",{cache:"no-store"}).then(function(r){return r.json();}).then(function(j){
+    ver.textContent="最新版: "+j.version;
+    var n=document.getElementById("notes");
+    if(j.notes){n.innerHTML='<p class="note"><b>最新版の更新内容</b>(バージョン '+j.version.replace(/</g,"&lt;")+')<br>'+String(j.notes).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+'</p>';}
+  }).catch(function(){ver.textContent="";});
+  document.getElementById("dl").addEventListener("click",function(ev){
+    ev.preventDefault();
+    fetch(base+"m2ts_encoder.pyw",{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.blob();}).then(function(b){
+      var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="m2ts_encoder.pyw";document.body.appendChild(a);a.click();
+      setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);
+    }).catch(function(){location.href="https://github.com/tatata17/m2ts-encoder/raw/main/m2ts_encoder.pyw";});
+  });
+})();
+</script>
+</body>
+</html>
