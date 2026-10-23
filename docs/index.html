@@ -167,6 +167,11 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>画面上部の「対象フォルダ」がそのフォルダになり、自動でスキャンが始まります</li>
   </ol>
   <p class="note">「ログ」「仕分け」フォルダも、<code>m2ts_encoder.pyw</code> と同じ場所に作られます。</p>
+  <div class="note" style="background:var(--accent-soft);border-color:var(--accent)">
+    <b>一覧に何も出ないときは「サブフォルダも検索する」にチェック!</b><br>
+    ブルーレイレコーダー等の録画は、<code>〇〇/STREAM/00001.m2ts</code> のように<b>フォルダの奥</b>に入っていることが多く、チェックが無いと、このフォルダ<b>直下</b>しか探しません。
+    直下に無くてサブフォルダに録画があるときは、スキャン後に「ONにしますか?」と確認が出ます。この設定は、次回起動時も覚えています。
+  </div>
 </section>
 
 <section id="basic">
@@ -298,6 +303,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
   <div class="scroll"><table>
     <tr><th>症状</th><th>対処</th></tr>
     <tr><td>「rplsinfo.exe が見つかりません」</td><td><code>rplsinfo.exe</code> を <code>m2ts_encoder.pyw</code> と同じフォルダに置く</td></tr>
+    <tr><td>一覧に何も出ない</td><td>画面上部の<b>「サブフォルダも検索する」にチェック</b>(録画は <code>〇〇/STREAM/</code> の奥にあることが多い)。<code>.m2ts</code> にもチェックが入っているか確認</td></tr>
     <tr><td>「おまかせ」の判定が出ない</td><td><code>ffprobe.exe</code> を同じフォルダに置くか、PATHを通す</td></tr>
     <tr><td><code>.pyw</code> をダブルクリックしても開かない</td><td>Pythonを入れ直し、<code>py launcher</code> と <code>.pyw</code> の関連付けにチェックを入れる</td></tr>
     <tr><td>エンコードの途中で止まって見える</td><td>字幕が非常にまばらな録画では、最後の「合体」で元のm2tsを読み進めるため、数分かかることがあります。ディスクの読み込みが動いていれば待ってください。</td></tr>

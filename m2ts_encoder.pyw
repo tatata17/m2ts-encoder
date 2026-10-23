@@ -2755,7 +2755,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.23.1"
+APP_VERSION = "2026.10.23.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -2936,7 +2936,7 @@ class App(tk.Tk):
         self.results: List[Tuple[str, str, str, str, str]] = []
         self.worker_queue: "queue.Queue" = queue.Queue()
         self.scanning = False
-        self.recursive_var = tk.BooleanVar(value=False)
+        self.recursive_var = tk.BooleanVar(value=load_settings().get("recursive", "0") == "1")
         self.include_m2ts_var = tk.BooleanVar(value=True)
         self.include_rpls_var = tk.BooleanVar(value=False)
         # ノイズ検査: m2tsパス -> 検出したノイズ区間 [(開始秒, 終了秒)](ファイル名への記載に使う)
@@ -3027,7 +3027,7 @@ class App(tk.Tk):
             scan_frame,
             text="サブフォルダも検索する",
             variable=self.recursive_var,
-            command=self.start_scan,
+            command=self._on_recursive_toggled,
         )
         self.recursive_check.pack(side=tk.LEFT, padx=(16, 0))
 
@@ -3243,6 +3243,11 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     # スキャン処理
     # ------------------------------------------------------------------
+    def _on_recursive_toggled(self):
+        self.settings["recursive"] = "1" if self.recursive_var.get() else "0"
+        save_settings(self.settings)
+        self.start_scan()
+
     def start_scan(self):
         if self.scanning or self.encoding_running:
             return
@@ -3284,6 +3289,23 @@ class App(tk.Tk):
             scope = "サブフォルダを含めて" if self.recursive_var.get() else ""
             ext_label = " / ".join(extensions)
             self.status_var.set(f"'{self.folder}' {scope}内に {ext_label} ファイルが見つかりませんでした。")
+            if not self.recursive_var.get():
+                # このフォルダ直下には無くても、サブフォルダの中にある録画は多い(例: 〇/STREAM/00001.m2ts)
+                try:
+                    in_sub = collect_target_files(self.folder, recursive=True, extensions=extensions)
+                except Exception:
+                    in_sub = []
+                if in_sub and not getattr(self, "_sub_prompted", False):
+                    self._sub_prompted = True
+                    if messagebox.askyesno(
+                        "サブフォルダに録画があります",
+                        f"このフォルダの直下には {ext_label} がありませんが、\n"
+                        f"サブフォルダの中に {len(in_sub)} 件見つかりました。\n\n"
+                        "「サブフォルダも検索する」をONにして、もう一度スキャンしますか?",
+                        parent=self,
+                    ):
+                        self.recursive_var.set(True)
+                        self._on_recursive_toggled()
             return
 
         self.scanning = True
