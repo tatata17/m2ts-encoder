@@ -2486,6 +2486,9 @@ _APP_START_TIME = datetime.datetime.now().timestamp()  # この起動中に作�
 TOOLTIP_DELAY_MS = 1500  # マウスを置いてから説明が出るまでの時間(ミリ秒)
 
 TOOLTIP_TEXTS = {
+    "変換済み一覧から選ぶ...": "「エンコード済み」タブと同じ一覧から、縦横比を直したいファイルを選んで追加します(複数選択OK)。",
+    "ファイルを追加...": "縦横比を直したいmkv/mp4を、ファイル選択画面から追加します。",
+    "元のファイルを .bak で残す": "ONにすると、直す前のファイルを「名前.mkv.bak」として残します(容量が倍になります)。OFFなら上書きします。",
     "再スキャン": "対象フォルダを調べ直して一覧を作り直します。ファイルを追加・削除したあとに押してください。",
     ".m2ts": "ONにすると .m2ts ファイルを一覧に出します。切り替えると自動で再スキャンします。",
     ".rpls": "ONにすると .rpls ファイル(レコーダーの番組情報ファイル)も一覧に出します。",
@@ -2779,7 +2782,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.25.2"
+APP_VERSION = "2026.10.25.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -2946,6 +2949,340 @@ def iter_process_lines(stream):
             yield decode_console_bytes(part)
     if buf:
         yield decode_console_bytes(buf)
+
+
+def probe_video_aspect(path: str) -> Tuple[str, str]:
+    """mkv/mp4の映像の (サイズ文字列, 表示アスペクト比) をffprobeで調べる。分からなければ空文字"""
+    ffprobe = find_ffprobe()
+    if not ffprobe:
+        return "", ""
+    cmd = [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+           "stream=width,height,sample_aspect_ratio,display_aspect_ratio", "-of", "json", path]
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        out = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             timeout=60, creationflags=flags).stdout.decode("utf-8", errors="replace")
+        st = (json.loads(out).get("streams") or [{}])[0]
+    except Exception:
+        return "", ""
+    size = f"{st.get('width', '?')}x{st.get('height', '?')}"
+    dar = str(st.get("display_aspect_ratio") or "")
+    if not dar or dar in ("0:1", "N/A"):
+        try:
+            w, h = int(st["width"]), int(st["height"])
+            sn, sd = [int(x) for x in str(st.get("sample_aspect_ratio") or "1:1").split(":")]
+            from math import gcd
+            a, b = w * sn, h * sd
+            g = gcd(a, b) or 1
+            dar = f"{a // g}:{b // g}"
+        except Exception:
+            dar = ""
+    return size, dar
+
+
+class AspectFixWindow(tk.Toplevel):
+    """
+    変換済みのmkv/mp4の縦横比(表示アスペクト比)だけを、再エンコードせずに書き換える。
+    ffmpegの -c copy で作り直す(映像・音声はそのまま。短時間で終わる)。
+    追加方法: 変換済み一覧から選ぶ / ファイルを選ぶ / ドラッグ&ドロップ(tkinterdnd2があれば)
+    """
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        self.title("縦横比を直す(再エンコードなし)")
+        self.geometry("900x520")
+        self.minsize(640, 360)
+        self.items: Dict[str, str] = {}  # iid -> path
+        self._queue: "queue.Queue" = queue.Queue()
+        self._worker: Optional[threading.Thread] = None
+        self._proc = None
+        self._stop = False
+        self.target_var = tk.StringVar(value="4:3")
+        self.keep_var = tk.BooleanVar(value=False)
+
+        top = ttk.Frame(self, padding=8)
+        top.pack(fill=tk.X)
+        ttk.Button(top, text="変換済み一覧から選ぶ...", command=self._pick_from_done).pack(side=tk.LEFT)
+        ttk.Button(top, text="ファイルを追加...", command=self._add_files).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(top, text="選択を外す", command=self._remove_selected).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(top, text="全部クリア", command=self._clear).pack(side=tk.LEFT, padx=(6, 0))
+
+        mid = ttk.Frame(self, padding=(8, 0))
+        mid.pack(fill=tk.BOTH, expand=True)
+        cols = ("file", "size", "now", "result")
+        self.tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="extended")
+        for c, label, w, anc in (("file", "ファイル", 460, "w"), ("size", "サイズ", 90, "center"),
+                                 ("now", "今の比率", 80, "center"), ("result", "結果", 200, "w")):
+            self.tree.heading(c, text=label)
+            self.tree.column(c, width=w, anchor=anc)
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.tag_configure("ok", background="#c6efce", foreground="#006100")
+        self.tree.tag_configure("ng", background="#ffc7ce", foreground="#9c0006")
+
+        self.hint_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.hint_var, foreground="#555").pack(fill=tk.X, padx=10, pady=(4, 0))
+
+        bottom = ttk.Frame(self, padding=8)
+        bottom.pack(fill=tk.X)
+        ttk.Label(bottom, text="直したい比率:").pack(side=tk.LEFT)
+        ttk.Radiobutton(bottom, text="4:3", variable=self.target_var, value="4:3").pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Radiobutton(bottom, text="16:9", variable=self.target_var, value="16:9").pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Checkbutton(bottom, text="元のファイルを .bak で残す", variable=self.keep_var).pack(side=tk.LEFT, padx=(16, 0))
+        self.run_button = ttk.Button(bottom, text="実行", command=self._run)
+        self.run_button.pack(side=tk.RIGHT)
+        self.stop_button = ttk.Button(bottom, text="中止", command=self._request_stop, state=tk.DISABLED)
+        self.stop_button.pack(side=tk.RIGHT, padx=(0, 6))
+        self.status_var = tk.StringVar(value="ファイルを追加してください")
+        ttk.Label(self, textvariable=self.status_var).pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        self._setup_dnd()
+        attach_tooltips(self)
+        self.after(150, self._poll)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    # ---- ファイルの追加 ----
+    def _setup_dnd(self):
+        self.dnd_ok = False
+        try:
+            from tkinterdnd2 import TkinterDnD, DND_FILES  # type: ignore
+            TkinterDnD._require(self)
+            self.tree.drop_target_register(DND_FILES)
+            self.tree.dnd_bind("<<Drop>>", self._on_drop)
+            self.dnd_ok = True
+            self.hint_var.set("ここにmkv/mp4をドラッグ&ドロップしても追加できます")
+        except Exception:
+            self.hint_var.set("ドラッグ&ドロップを使うには、コマンドプロンプトで  pip install tkinterdnd2  を実行して再起動してください"
+                              "(使わなくても、上のボタンから追加できます)")
+
+    def _on_drop(self, event):
+        try:
+            paths = list(self.tk.splitlist(event.data))
+        except tk.TclError:
+            paths = [event.data]
+        self.add_paths(paths)
+
+    def _add_files(self):
+        paths = filedialog.askopenfilenames(
+            parent=self, title="縦横比を直すファイル", filetypes=[("mkv/mp4", "*.mkv *.mp4"), ("すべて", "*.*")])
+        self.add_paths(list(paths))
+
+    def _pick_from_done(self):
+        if self.app.encoding_running or self.app.scanning:
+            messagebox.showinfo("情報", "スキャンまたはエンコード中は一覧を読み込めません。", parent=self)
+            return
+        if not getattr(self.app, "_done_loaded", False):
+            self.app.refresh_done_list()
+        entries = list(getattr(self.app, "_done_all", []))
+        if not entries:
+            messagebox.showinfo("情報", "変換済みのファイルが見つかりません。", parent=self)
+            return
+        dlg = tk.Toplevel(self)
+        dlg.title("変換済み一覧から選ぶ(複数選択できます)")
+        dlg.geometry("820x480")
+        dlg.transient(self)
+        fvar = tk.StringVar()
+        fr = ttk.Frame(dlg, padding=8)
+        fr.pack(fill=tk.X)
+        ttk.Label(fr, text="絞り込み:").pack(side=tk.LEFT)
+        ent = ttk.Entry(fr, textvariable=fvar)
+        ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        tv = ttk.Treeview(dlg, columns=("file", "program", "channel"), show="headings", selectmode="extended")
+        for c, label, w in (("file", "ファイル", 360), ("program", "番組名", 280), ("channel", "放送局", 140)):
+            tv.heading(c, text=label)
+            tv.column(c, width=w, anchor="w")
+        tv.pack(fill=tk.BOTH, expand=True, padx=8)
+        shown: Dict[str, str] = {}
+
+        def refill(*_a):
+            for i in tv.get_children():
+                tv.delete(i)
+            shown.clear()
+            terms = self.app._norm_search(fvar.get()).split()
+            for e in entries:
+                hay = self.app._norm_search(e["program"] + " " + e["file"] + " " + e["channel_text"])
+                if all(t in hay for t in terms):
+                    iid = tv.insert("", "end", values=(e["file"], e["program"], e["channel_text"]))
+                    shown[iid] = e["path"]
+
+        fvar.trace_add("write", refill)
+        refill()
+
+        def ok():
+            self.add_paths([shown[i] for i in tv.selection() if i in shown])
+            dlg.destroy()
+
+        bar = ttk.Frame(dlg, padding=8)
+        bar.pack(fill=tk.X)
+        ttk.Button(bar, text="全選択", command=lambda: tv.selection_set(tv.get_children())).pack(side=tk.LEFT)
+        ttk.Button(bar, text="追加", command=ok).pack(side=tk.RIGHT)
+        ttk.Button(bar, text="キャンセル", command=dlg.destroy).pack(side=tk.RIGHT, padx=(0, 6))
+        ent.focus_set()
+
+    def add_paths(self, paths: List[str]):
+        existing = {os.path.normcase(os.path.abspath(p)) for p in self.items.values()}
+        added = 0
+        for p in paths:
+            p = os.path.abspath(p)
+            if os.path.isdir(p):
+                continue
+            if not p.lower().endswith(CONVERTED_EXTENSIONS) or not os.path.isfile(p):
+                continue
+            key = os.path.normcase(p)
+            if key in existing:
+                continue
+            existing.add(key)
+            iid = self.tree.insert("", "end", values=(os.path.basename(p), "…", "…", ""))
+            self.items[iid] = p
+            added += 1
+        if added:
+            self.status_var.set(f"{len(self.items)}件を追加しました(比率を調べています)")
+            threading.Thread(target=self._probe_all, daemon=True).start()
+
+    def _probe_all(self):
+        for iid, path in list(self.items.items()):
+            size, dar = probe_video_aspect(path)
+            self._queue.put(("probe", iid, size, dar))
+
+    def _remove_selected(self):
+        if self._worker and self._worker.is_alive():
+            return
+        for iid in self.tree.selection():
+            self.items.pop(iid, None)
+            self.tree.delete(iid)
+
+    def _clear(self):
+        if self._worker and self._worker.is_alive():
+            return
+        for iid in list(self.items):
+            self.tree.delete(iid)
+        self.items.clear()
+        self.status_var.set("ファイルを追加してください")
+
+    # ---- 実行 ----
+    def _run(self):
+        if self._worker and self._worker.is_alive():
+            return
+        if not self.items:
+            messagebox.showinfo("情報", "ファイルを追加してください。", parent=self)
+            return
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            messagebox.showerror("エラー", "ffmpeg が見つかりません。", parent=self)
+            return
+        target = self.target_var.get()
+        if not messagebox.askokcancel(
+                "確認", f"{len(self.items)}件の縦横比を {target} に書き換えます。\n"
+                        "映像・音声は再エンコードせず、そのままコピーして作り直します。", parent=self):
+            return
+        self._stop = False
+        self.run_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL)
+        keep = bool(self.keep_var.get())
+        jobs = list(self.items.items())
+        self._worker = threading.Thread(target=self._work, args=(ffmpeg, target, keep, jobs), daemon=True)
+        self._worker.start()
+
+    def _request_stop(self):
+        self._stop = True
+        kill_process_tree(self._proc)
+
+    def _work(self, ffmpeg: str, target: str, keep: bool, jobs: List[Tuple[str, str]]):
+        done = failed = 0
+        for n, (iid, path) in enumerate(jobs, 1):
+            if self._stop:
+                break
+            self._queue.put(("status", f"{n}/{len(jobs)} 処理中: {os.path.basename(path)}"))
+            ok, msg = change_aspect_copy(ffmpeg, path, target, keep, self)
+            if ok:
+                done += 1
+                size, dar = probe_video_aspect(path)
+                self._queue.put(("probe", iid, size, dar))
+            else:
+                failed += 1
+            self._queue.put(("result", iid, ok, msg))
+        text = f"完了: 成功 {done}件 / 失敗 {failed}件" + ("(中止しました)" if self._stop else "")
+        self._queue.put(("finish", text))
+
+    def _poll(self):
+        try:
+            while True:
+                kind, *rest = self._queue.get_nowait()
+                if kind == "probe":
+                    iid, size, dar = rest
+                    if self.tree.exists(iid):
+                        self.tree.set(iid, "size", size or "?")
+                        self.tree.set(iid, "now", dar or "?")
+                elif kind == "result":
+                    iid, ok, msg = rest
+                    if self.tree.exists(iid):
+                        self.tree.set(iid, "result", msg)
+                        self.tree.item(iid, tags=("ok" if ok else "ng",))
+                elif kind == "status":
+                    self.status_var.set(rest[0])
+                elif kind == "finish":
+                    self.status_var.set(rest[0])
+                    self.run_button.config(state=tk.NORMAL)
+                    self.stop_button.config(state=tk.DISABLED)
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(150, self._poll)
+
+    def _close(self):
+        if self._worker and self._worker.is_alive():
+            if not messagebox.askyesno("確認", "処理中です。中止して閉じますか?", parent=self):
+                return
+            self._request_stop()
+        self.destroy()
+
+
+def change_aspect_copy(ffmpeg: str, path: str, target: str, keep_original: bool, win=None) -> Tuple[bool, str]:
+    """
+    mkv/mp4の表示アスペクト比を target("4:3"/"16:9") に書き換える(-c copy。再エンコードしない)。
+    いったん別名に書き出し、比率と長さを確かめてから元のファイルと入れ替える。
+    """
+    base, ext = os.path.splitext(path)
+    tmp = base + ".aspect_tmp" + ext
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        cmd = [ffmpeg, "-y", "-v", "error", "-i", path, "-map", "0", "-c", "copy",
+               "-ignore_unknown", "-aspect", target, tmp]
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, creationflags=flags)
+        if win is not None:
+            win._proc = proc
+        err = proc.communicate()[1].decode("utf-8", errors="replace").strip()
+        if win is not None:
+            win._proc = None
+        if proc.returncode != 0 or not os.path.isfile(tmp):
+            raise RuntimeError("ffmpegが失敗しました: " + (err.splitlines()[-1] if err else f"code={proc.returncode}"))
+        _size, dar = probe_video_aspect(tmp)
+        if dar != target:
+            raise RuntimeError(f"書き換え後の比率が {dar or '不明'} でした")
+        if os.path.getsize(tmp) < os.path.getsize(path) * 0.9:
+            raise RuntimeError("出力が小さすぎるため中止しました(元は変更していません)")
+        if keep_original:
+            bak = path + ".bak"
+            if os.path.exists(bak):
+                os.remove(bak)
+            os.replace(path, bak)
+            os.replace(tmp, path)
+        else:
+            os.replace(tmp, path)
+        return True, f"{target} に変更しました"
+    except Exception as e:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        return False, str(e)
 
 
 class App(tk.Tk):
@@ -3232,6 +3569,8 @@ class App(tk.Tk):
         tool_menu.add_command(label="ファイル名の記号を全角に修正", command=self._fix_semicolon_filenames)
         tool_menu.add_separator()
         tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
+        tool_menu.add_separator()
+        tool_menu.add_command(label="縦横比を直す(変換済みmkv/mp4。再エンコードなし)...", command=self._open_aspect_fix)
         menubar.add_cascade(label="ツール", menu=tool_menu)
         self.sort_button = MenuEntryProxy(tool_menu, 0)
         self.fix_names_item = MenuEntryProxy(tool_menu, 1)
@@ -3463,6 +3802,18 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     # 変換済みm2tsの削除
     # ------------------------------------------------------------------
+    def _open_aspect_fix(self):
+        """縦横比を直すウインドウ(開いていれば前面に出す)"""
+        win = getattr(self, "_aspect_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        self._aspect_win = AspectFixWindow(self)
+
     def _fix_semicolon_filenames(self):
         """
         過去のバージョンで、禁止文字の代替として使われていたASCIIプレースホルダ
