@@ -806,6 +806,8 @@ _CRITICAL_PATTERNS = [
     (re.compile(r"conversion failed", re.IGNORECASE), "変換に失敗しました(Conversion failed)"),
     (re.compile(r"error while opening encoder", re.IGNORECASE), "エンコーダーを開けませんでした"),
     (re.compile(r"cannot allocate memory", re.IGNORECASE), "メモリを確保できませんでした"),
+    (re.compile(r"not supported by the bitstream filter", re.IGNORECASE), "音声の形式に合わない設定でした(bitstream filter)"),
+    (re.compile(r"error initializing bitstream filter", re.IGNORECASE), "音声の変換フィルタを初期化できませんでした"),
 ]
 
 # 発生位置に関わらず「要確認」扱いにするパターン(映像/音声ノイズの疑い)
@@ -1428,6 +1430,14 @@ def resolve_auto_options(
             elif len(live_audio) != len(audio):
                 notes.append("→ 実体のない(パケットが無い・0chの)音声トラックは使いません")
 
+    non_aac = [k for k, st in enumerate(audio) if k in live_audio and st.get("codec") not in ("aac", "aac_latm")]
+    if non_aac:
+        o["audio_non_aac"] = non_aac
+        if "audio_ordinals" not in o:
+            o["audio_ordinals"] = list(live_audio)
+        names = ", ".join(f"a:{k}={audio[k].get('codec') or '不明'}" for k in non_aac)
+        notes.append(f"音声がAAC以外です({names})→ AAC用のフィルタは付けずにコピーします")
+
     auto_select = bool(o["auto_select"])
     if auto_select:
         o["subs"] = True  # まず字幕を入れる前提にして、下の判定で中身が無ければ外す
@@ -1530,7 +1540,8 @@ def resolve_auto_options(
             o["container"] = "mp4"  # モノラル二か国語の分離は、字幕を扱わないmp4で行う
             o["subs"] = False
         else:
-            o["container"] = "mkv" if o["subs"] else "mp4"
+            # AAC以外(mp2など)の音声はmp4だと互換性が低いので、mkvにする
+            o["container"] = "mkv" if (o["subs"] or non_aac) else "mp4"
         o["hvc1"] = o["container"] == "mp4"
         size = f"{video['width']}x{video['height']}" if video and video.get("width") else "?"
         notes.append(
@@ -2224,7 +2235,7 @@ def normalize_encode_options(options: Optional[Dict[str, object]]) -> Dict[str, 
     if options:
         merged.update({k: v for k, v in options.items() if k in DEFAULT_ENCODE_OPTIONS})
     # 実行時にだけ使う(ffprobe判定の結果。保存はしない)
-    for key in ("audio_ordinals", "sub_ordinals", "audio_post_ordinals"):
+    for key in ("audio_ordinals", "sub_ordinals", "audio_post_ordinals", "audio_non_aac"):
         if options and isinstance(options.get(key), list):
             merged[key] = list(options[key])
     if options and options.get("audio_desc"):
@@ -2332,7 +2343,17 @@ def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str =
                   "-metadata:s:a:0", "title=%M2TS_TITLE_MAIN%", "-metadata:s:a:1", "title=%M2TS_TITLE_SUB%",
                   "-metadata:s:a:2", "title=%M2TS_TITLE_BOTH%"]
     else:
-        parts += ["-c:a", "copy", "-bsf:a", "aac_adtstoasc", "-metadata:s:a:0", "language=jpn"]
+        parts += ["-c:a", "copy"]
+        # aac_adtstoascはAAC専用。mp2などに付けるとffmpegが出力を作れず失敗するため、AACの音声だけに付ける
+        non_aac = set(o.get("audio_non_aac", []))
+        if not non_aac:
+            parts += ["-bsf:a", "aac_adtstoasc"]
+        else:
+            selected = list(o.get("audio_ordinals", []))
+            for n, k in enumerate(selected):
+                if k not in non_aac:
+                    parts += [f"-bsf:a:{n}", "aac_adtstoasc"]
+        parts += ["-metadata:s:a:0", "language=jpn"]
         if "audio_ordinals" in o:
             single_audio = len(o["audio_ordinals"]) == 1
         else:
@@ -2387,7 +2408,8 @@ def build_postmux_command(options: Optional[Dict[str, object]]) -> Optional[str]
     first_pass_audio = len(o["audio_ordinals"]) if o.get("audio_ordinals") else 1
     for i in range(len(audio)):
         n = first_pass_audio + i
-        parts += [f"-bsf:a:{n}", "aac_adtstoasc"]
+        if audio[i] not in set(o.get("audio_non_aac", [])):
+            parts += [f"-bsf:a:{n}", "aac_adtstoasc"]
         if o.get("audio_desc"):
             parts += [f"-metadata:s:a:{n}", "language=jpn", f"-metadata:s:a:{n}", "title=%M2TS_TITLE_DESC%"]
         else:
@@ -2755,7 +2777,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.23.2"
+APP_VERSION = "2026.10.25.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5912,7 +5934,10 @@ class App(tk.Tk):
         if not self.stop_requested:
             diag_label, diag_issues = analyze_ffmpeg_log(collected_lines, process.returncode)
             if any(("Not overwriting" in l) or ("Error opening output file" in l) for l in collected_lines):
-                diag_issues = list(diag_issues) + [("出力ファイルを作れませんでした(同名のファイルが残っていました)", 1, [])]
+                if any("bitstream filter" in l for l in collected_lines):
+                    diag_issues = list(diag_issues) + [("出力ファイルを作れませんでした(音声の形式に合わない設定でした)", 1, [])]
+                else:
+                    diag_issues = list(diag_issues) + [("出力ファイルを作れませんでした(同名のファイルが残っていました)", 1, [])]
                 diag_label = "失敗"
             if any(l.startswith("[MERGE-FAILED]") for l in collected_lines):
                 # 1回目は成功しているが、後から合体するはずの音声・字幕が入っていない
