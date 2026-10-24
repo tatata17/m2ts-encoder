@@ -1535,7 +1535,9 @@ def resolve_auto_options(
         o["audio"] = "mono" if is_mono else "copy"
         o["catv"] = bool(progressive_60 and not is_mono)
         o["deint"] = "none" if progressive_60 else "bwdif"
-        o["aspect"] = True
+        # 16:9を強制するのは、CATVの高さ半分の60p(SAR 1:1)や、HD放送のとき。
+        # 720x480などのSD(4:3の放送が多い)に強制すると、横に伸びてしまうので、元の縦横比のままにする
+        o["aspect"] = bool(progressive_60 or not half_height)
         if is_mono:
             o["container"] = "mp4"  # モノラル二か国語の分離は、字幕を扱わないmp4で行う
             o["subs"] = False
@@ -1545,7 +1547,7 @@ def resolve_auto_options(
         o["hvc1"] = o["container"] == "mp4"
         size = f"{video['width']}x{video['height']}" if video and video.get("width") else "?"
         notes.append(
-            f"映像 {size} {fps:.2f}fps field_order={field_order or '不明'} → "
+            ("" if o["aspect"] else "SD映像のため縦横比は元のまま(16:9を強制しません) / ") + f"映像 {size} {fps:.2f}fps field_order={field_order or '不明'} → "
             + ("プログレッシブ60p(CATV扱い・インターレース解除なし)" if progressive_60
                else "インターレース扱い(bwdif)")
         )
@@ -2777,7 +2779,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.25.1"
+APP_VERSION = "2026.10.25.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
