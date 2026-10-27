@@ -273,6 +273,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
   <h2><span class="n">6</span>その他の機能</h2>
   <div class="callouts">
     <div><b>変換済みm2tsを削除</b><br>メニュー「ツール」。変換済み(mkv/mp4がある)の元m2tsをまとめて削除します。mkv/mp4は削除しません。ノイズ検査が未完了・中断のものは対象になりません。</div>
+    <div><b>作品ごとに仕分け</b><br>仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。ファイルごとに移動先を選べ、直前の1回は元に戻せます。作品名は、話数や <code>[二]</code> を除いた名前の最初の空白までを自動で提案します(1本だけの番組は動かしません)。</div>
     <div><b>縦横比を直す</b><br>変換済みmkv/mp4の4:3 / 16:9表示を、再エンコードなしで書き換えます。一覧から選ぶか、ドラッグ&amp;ドロップ(要 <code>pip install tkinterdnd2</code>)で追加します。</div>
     <div><b>ファイル名の記号を全角に修正</b><br>過去の版で半角記号(<code>;</code> <code>@</code> <code>$</code> など)になったファイル名を、本来の全角へ戻します。</div>
     <div><b>一覧をCSVに保存</b><br>メニュー「ファイル」から。</div>
@@ -317,6 +318,11 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">9</span>更新履歴</h2>
   <p>新しい順です。</p>
+  <h3>2026.10.28.1 <small style="color:var(--muted);font-weight:400">(2026-10-28)</small></h3>
+  <ul class="tight">
+    <li>ツール →「作品ごとに仕分け」を追加。仕分け済みの放送局フォルダの中を、作品名のフォルダ(仕分け/放送局名/作品名/)に分けます。別ウインドウで、ファイルごとに移動先を選べます(作品名の長さ指定・名前の手入力・動かさない・放送局の直下へ)。並べ替えと検索、手で決めた名前の記憶、直前1回の「元に戻す」に対応。</li>
+    <li>作品フォルダの中のファイルも、変換済みの判定・「エンコード済み」タブ・チャンネル別の仕分けで、仕分け済みとして扱われるようにしました。</li>
+  </ul>
   <h3>2026.10.25.3 <small style="color:var(--muted);font-weight:400">(2026-10-25)</small></h3>
   <ul class="tight">
     <li>ツール →「縦横比を直す」を追加。変換済みmkv/mp4の4:3/16:9表示を、再エンコードなしで書き換えられます(一覧から選ぶ・ファイル追加・ドラッグ&amp;ドロップ)。</li>

@@ -157,19 +157,33 @@ def get_sort_root() -> str:
 
 
 def list_sorted_dirs() -> List[str]:
-    """仕分けフォルダ本体と、その直下のチャンネル別フォルダの一覧(存在するものだけ)"""
+    """仕分けフォルダ本体と、その下にあるすべてのフォルダ(チャンネル別・作品別)の一覧(存在するものだけ)"""
     root = get_sort_root()
     if not os.path.isdir(root):
         return []
     dirs = [root]
     try:
-        for name in sorted(os.listdir(root)):
-            sub = os.path.join(root, name)
-            if os.path.isdir(sub):
-                dirs.append(sub)
+        for current, subdirs, _files in os.walk(root):
+            subdirs.sort()
+            for name in subdirs:
+                dirs.append(os.path.join(current, name))
     except OSError:
         pass
     return dirs
+
+
+def list_channel_dirs() -> List[str]:
+    """仕分けフォルダの直下にあるチャンネル別フォルダの一覧"""
+    root = get_sort_root()
+    result: List[str] = []
+    try:
+        for name in sorted(os.listdir(root)):
+            sub = os.path.join(root, name)
+            if os.path.isdir(sub):
+                result.append(sub)
+    except OSError:
+        pass
+    return result
 
 
 def list_converted_names(folder: str, include_sorted: bool = True) -> List[str]:
@@ -2486,6 +2500,15 @@ _APP_START_TIME = datetime.datetime.now().timestamp()  # この起動中に作�
 TOOLTIP_DELAY_MS = 1500  # マウスを置いてから説明が出るまでの時間(ミリ秒)
 
 TOOLTIP_TEXTS = {
+    "作品フォルダ名を入力...": "選んだ行を入れる作品フォルダの名前を手で決めます(空欄なら放送局フォルダの直下)。行をダブルクリックでも開きます。",
+    "作品名の長さを指定...": "番組名の先頭から何文字を作品名にするかを数で決めます。話数や[二]は除いた名前から数えます。",
+    "動かさない": "選んだ行は、今の場所のままにします。",
+    "放送局の直下へ": "選んだ行を、作品フォルダではなく放送局フォルダの直下に置きます。",
+    "自動提案に戻す": "選んだ行の移動先を、自動の提案に戻します(手で決めた内容は消えます)。",
+    "手で決めた名前を、次回の自動提案に使う": "ONにすると、手で決めた作品名を覚えて、次回から同じ作品を自動でその名前に振り分けます。",
+    "実行(移動する)": "緑の行を、確認のあとで作品フォルダへ移動します。mkv/mp4と対のcsvを一緒に動かします。",
+    "直前の仕分けを元に戻す": "直前の1回の仕分けで動かしたファイルを、元の場所へ戻します。",
+    "一覧を読み直す": "仕分けフォルダを読み直して、自動提案もやり直します(手で決めた内容は消えます)。",
     "変換済み一覧から選ぶ...": "「エンコード済み」タブと同じ一覧から、縦横比を直したいファイルを選んで追加します(複数選択OK)。",
     "ファイルを追加...": "縦横比を直したいmkv/mp4を、ファイル選択画面から追加します。",
     "元のファイルを .bak で残す": "ONにすると、直す前のファイルを「名前.mkv.bak」として残します(容量が倍になります)。OFFなら上書きします。",
@@ -2782,7 +2805,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.25.3"
+APP_VERSION = "2026.10.28.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -2949,6 +2972,246 @@ def iter_process_lines(stream):
             yield decode_console_bytes(part)
     if buf:
         yield decode_console_bytes(buf)
+
+
+# ----------------------------------------------------------------------
+# 作品ごとの仕分け(「仕分け/放送局名/」の中に、作品名のフォルダを作る)
+# ----------------------------------------------------------------------
+_SERIES_TAG = r"(?:\[[^\[\]]{1,4}\]|【[^【】]{1,4}】|＜[^＜＞]{1,4}＞|\([^()]{1,3}\)|（[^（）]{1,3}）)"
+_SERIES_TRAIL_TAGS_RE = re.compile(r"(?:\s*" + _SERIES_TAG + r")+\s*$")
+_SERIES_LEAD_TAG_RE = re.compile(r"^\s*(?:\[[^\[\]]+\]|【[^【】]+】)\s*")
+_SERIES_EPISODE_RES = [
+    re.compile(r"\s*[#＃♯]\s*[0-9０-９]+.*$"),
+    re.compile(r"\s*第\s*[0-9０-９一二三四五六七八九十百]+\s*[話回夜章幕].*$"),
+    re.compile(r"\s*[0-9０-９]+\s*[話回]\b.*$"),
+]
+_SERIES_STRIP_CHARS = " 　-－―~〜・:：,、。.…"
+
+
+def clean_program_title(program: str) -> str:
+    """番組名から、先頭の[特集名]、末尾の[二][字]などの記号、話数(#24 / 第3話)を外す"""
+    text = (program or "").strip()
+    lead = _SERIES_LEAD_TAG_RE.match(text)
+    if lead and text[lead.end():].strip():
+        text = text[lead.end():]
+    for _ in range(4):
+        before = text
+        text = _SERIES_TRAIL_TAGS_RE.sub("", text)
+        for pattern in _SERIES_EPISODE_RES:
+            cut = pattern.sub("", text)
+            if cut.strip():
+                text = cut
+        text = text.strip(_SERIES_STRIP_CHARS)
+        if text == before:
+            break
+    return text.strip(_SERIES_STRIP_CHARS) or (program or "").strip()
+
+
+def suggest_series_name(program: str) -> str:
+    """作品名の提案。話数などを外した名前の、最初の空白までを作品名とみなす(空白が無ければ全体)"""
+    base = clean_program_title(program)
+    parts = re.split(r"[ 　]+", base, maxsplit=1)
+    first = parts[0].strip(_SERIES_STRIP_CHARS)
+    return first if len(first) >= 2 else base
+
+
+def series_key(name: str) -> str:
+    """作品名の比較用キー(全角/半角・大文字小文字・ひらがな/カタカナ・空白の違いを無視)"""
+    folded = unicodedata.normalize("NFKC", name or "").casefold()
+    folded = "".join(chr(ord(ch) - 0x60) if "ァ" <= ch <= "ヶ" else ch for ch in folded)
+    return re.sub(r"\s+", "", folded)
+
+
+def series_folder_name(name: str) -> str:
+    """作品名をフォルダ名にする(禁止文字は全角に。末尾の空白・ドットは取る)"""
+    return sanitize_title_for_filename((name or "").strip()).strip().rstrip(". ")
+
+
+def apply_series_rules(program: str, rules: Dict[str, str]) -> Optional[str]:
+    """覚えさせた規則(作品名の先頭が一致 → フォルダ名)に合うものがあれば、そのフォルダ名を返す(長い規則を優先)"""
+    base_key = series_key(clean_program_title(program))
+    best = ""
+    for key in rules:
+        if key and base_key.startswith(key) and len(key) > len(best):
+            best = key
+    return rules[best] if best else None
+
+
+def title_from_video_name(path: str) -> str:
+    """csvが無いときの番組名: ファイル名から ",20131123" の日付と拡張子を外したもの"""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    return re.sub(r",\d{8}(?:\(\d+\))?$", "", stem)
+
+
+def scan_series_items(root: str) -> List[dict]:
+    """
+    仕分けフォルダ(root)の「放送局フォルダ」の中にある mkv/mp4 を一覧にする。
+    戻り値の各要素: path / channel(放送局フォルダ名) / cur_series(今いる作品フォルダ名。放送局直下なら空) /
+    where(rootからの相対位置) / program(番組名) / file
+    仕分けフォルダ直下(放送局フォルダの外)にあるものは対象外。
+    """
+    items: List[dict] = []
+    if not os.path.isdir(root):
+        return items
+    for path in list_sorted_videos(root):
+        parts = os.path.relpath(path, root).split(os.sep)
+        if len(parts) < 2:
+            continue
+        csv_path = os.path.splitext(path)[0] + ".csv"
+        program = ""
+        if os.path.isfile(csv_path):
+            program = read_program_info_from_sidecar_csv(csv_path)[0]
+        items.append({
+            "path": path, "channel": parts[0],
+            "cur_series": parts[1] if len(parts) >= 3 else "",
+            "deep": len(parts) > 3,
+            "where": os.sep.join(parts[:-1]),
+            "program": program or title_from_video_name(path),
+            "file": parts[-1],
+        })
+    return items
+
+
+def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dict[str, Optional[str]]:
+    """
+    各ファイル(path)の作品フォルダの自動提案。None=動かさない、""=放送局直下、文字列=その作品フォルダへ。
+    同じ放送局で同じ作品名が2本以上あるものだけ作品フォルダを提案する(1本だけは動かさない)。
+    覚えさせた規則に合うものは、本数に関わらずその名前にする。
+    """
+    cands: Dict[str, str] = {}
+    counts: Dict[Tuple[str, str], int] = {}
+    ruled: set = set()
+    for it in items:
+        rule = apply_series_rules(it["program"], rules)
+        name = rule if rule else suggest_series_name(it["program"])
+        cands[it["path"]] = name
+        if rule:
+            ruled.add(it["path"])
+        key = (it["channel"], series_key(name))
+        counts[key] = counts.get(key, 0) + 1
+    result: Dict[str, Optional[str]] = {}
+    for it in items:
+        name = cands[it["path"]]
+        if it["path"] in ruled or counts[(it["channel"], series_key(name))] >= 2:
+            result[it["path"]] = series_folder_name(name) or None
+        else:
+            result[it["path"]] = None
+    return result
+
+
+def resolve_series_target_dir(root: str, channel: str, series: str) -> str:
+    """作品フォルダの実際のパス。放送局フォルダの中に、全角/半角などの違いだけの同じ作品フォルダがあれば、それを使う"""
+    channel_dir = os.path.join(root, channel)
+    if not series:
+        return channel_dir
+    try:
+        for name in os.listdir(channel_dir):
+            if os.path.isdir(os.path.join(channel_dir, name)) and series_key(name) == series_key(series):
+                return os.path.join(channel_dir, name)
+    except OSError:
+        pass
+    return os.path.join(channel_dir, series)
+
+
+SERIES_UNDO_FILENAME = "series_sort_undo.json"
+
+
+def get_series_undo_path() -> str:
+    return os.path.join(get_app_data_dir(), SERIES_UNDO_FILENAME)
+
+
+def execute_series_moves(plan: List[Tuple[str, str]], progress=None) -> Tuple[List[dict], List[str]]:
+    """
+    plan: [(動画のパス, 移動先フォルダ)]。動画と同名のcsvを一緒に動かす。
+    移動先に同名のファイルがあるときは、上書きせずにその1本を止める。
+    戻り値: (動かした記録[{video_from, video_to, csv_from, csv_to}], エラー文のリスト)
+    """
+    moved: List[dict] = []
+    errors: List[str] = []
+    for index, (video, dest_dir) in enumerate(plan, 1):
+        try:
+            stem, ext = os.path.splitext(os.path.basename(video))
+            csv_from = os.path.join(os.path.dirname(video), stem + ".csv")
+            video_to = os.path.join(dest_dir, stem + ext)
+            csv_to = os.path.join(dest_dir, stem + ".csv")
+            if os.path.exists(video_to) or (os.path.isfile(csv_from) and os.path.exists(csv_to)):
+                errors.append(f"{os.path.basename(video)}: 移動先に同名のファイルがあるため動かしませんでした")
+                continue
+            os.makedirs(dest_dir, exist_ok=True)
+            shutil.move(video, video_to)
+            record = {"video_from": video, "video_to": video_to, "csv_from": "", "csv_to": ""}
+            if os.path.isfile(csv_from):
+                try:
+                    shutil.move(csv_from, csv_to)
+                    record["csv_from"], record["csv_to"] = csv_from, csv_to
+                except OSError as e:
+                    errors.append(f"{stem}.csv: {e}")
+            moved.append(record)
+        except Exception as e:
+            errors.append(f"{os.path.basename(video)}: {e}")
+        if progress:
+            progress(index, len(plan))
+    return moved, errors
+
+
+def save_series_undo(moved: List[dict]) -> None:
+    try:
+        with io.open(get_series_undo_path(), "w", encoding="utf-8") as f:
+            json.dump({"moves": moved}, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+def load_series_undo() -> List[dict]:
+    try:
+        with io.open(get_series_undo_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [m for m in data.get("moves", []) if isinstance(m, dict)]
+    except Exception:
+        return []
+
+
+def clear_series_undo() -> None:
+    try:
+        os.remove(get_series_undo_path())
+    except OSError:
+        pass
+
+
+def undo_series_moves(moved: List[dict], root: str) -> Tuple[int, List[str]]:
+    """記録を逆順にたどって、動画とcsvを元の場所へ戻す。戻せなかった1本は飛ばして、エラー文を返す。
+    動かした先の作品フォルダが空になったら削除する(放送局フォルダ・仕分けフォルダ本体は消さない)。"""
+    restored = 0
+    errors: List[str] = []
+    emptied: set = set()
+    for rec in reversed(moved):
+        try:
+            vt, vf = rec["video_to"], rec["video_from"]
+            if not os.path.isfile(vt):
+                errors.append(f"{os.path.basename(vt)}: 動かした先に見つかりません")
+                continue
+            if os.path.exists(vf):
+                errors.append(f"{os.path.basename(vf)}: 元の場所に同名のファイルがあるため戻せません")
+                continue
+            os.makedirs(os.path.dirname(vf), exist_ok=True)
+            shutil.move(vt, vf)
+            emptied.add(os.path.dirname(vt))
+            if rec.get("csv_to") and os.path.isfile(rec["csv_to"]) and not os.path.exists(rec["csv_from"]):
+                shutil.move(rec["csv_to"], rec["csv_from"])
+            restored += 1
+        except Exception as e:
+            errors.append(f"{os.path.basename(rec.get('video_to', '?'))}: {e}")
+    root_norm = os.path.normcase(os.path.abspath(root))
+    for d in emptied:
+        d_norm = os.path.normcase(os.path.abspath(d))
+        depth = len(os.path.relpath(d_norm, root_norm).split(os.sep)) if d_norm.startswith(root_norm + os.sep) else 0
+        if depth >= 2:  # 放送局フォルダより深い(=作品フォルダ)だけ
+            try:
+                if not os.listdir(d):
+                    os.rmdir(d)
+            except OSError:
+                pass
+    return restored, errors
 
 
 def probe_video_aspect(path: str) -> Tuple[str, str]:
@@ -3285,6 +3548,307 @@ def change_aspect_copy(ffmpeg: str, path: str, target: str, keep_original: bool,
         return False, str(e)
 
 
+class SeriesSortWindow(tk.Toplevel):
+    """
+    「作品ごとに仕分け」: 仕分け済みの放送局フォルダ(仕分け/放送局名/)の中で、作品名のフォルダに振り分ける。
+    ファイルごとに、移動先(作品フォルダ・放送局直下・今のまま)を選べる。実行前に一覧で確認でき、
+    直前の1回は「元に戻す」で戻せる。
+    """
+
+    KEEP = None  # 動かさない
+    COLS = (("file", "ファイル", 300), ("program", "番組名", 260), ("channel", "放送局", 120),
+            ("now", "今の作品フォルダ", 140), ("dest", "移動先(作品フォルダ)", 200))
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        self.title("作品ごとに仕分け")
+        self.geometry("1120x640")
+        self.minsize(760, 420)
+        self.root_dir = get_sort_root()
+        self.items: List[dict] = []
+        self.dest: Dict[str, Optional[str]] = {}   # path -> None(動かさない) / ""(放送局直下) / 作品フォルダ名
+        self.manual: set = set()                    # 手で指定した行(規則として覚える対象)
+        self.rows: Dict[str, str] = {}              # iid -> path
+        self.sort_state: Tuple[str, bool] = ("", True)
+        self.filter_var = tk.StringVar()
+        self.remember_var = tk.BooleanVar(value=True)
+        self.info_var = tk.StringVar()
+        self.rules: Dict[str, str] = dict(load_settings().get("series_rules", {}) or {})
+        self._busy = False
+
+        top = ttk.Frame(self, padding=(8, 6))
+        top.pack(fill=tk.X)
+        ttk.Label(top, text="絞り込み:").pack(side=tk.LEFT)
+        ent = ttk.Entry(top, textvariable=self.filter_var, width=34)
+        ent.pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(top, text="クリア", command=lambda: self.filter_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(top, text="一覧を読み直す", command=self.reload).pack(side=tk.RIGHT)
+        self.filter_var.trace_add("write", lambda *_: self._render())
+
+        mid = ttk.Frame(self)
+        mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.tree = ttk.Treeview(mid, columns=[c for c, _l, _w in self.COLS], show="headings", selectmode="extended")
+        self._labels = {}
+        for c, label, w in self.COLS:
+            self._labels[c] = label
+            self.tree.heading(c, text=label, command=lambda col=c: self._sort_by(col))
+            self.tree.column(c, width=w, anchor="w")
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.tag_configure("move", background="#c6efce", foreground="#006100")
+        self.tree.tag_configure("keep", foreground="#7a7a7a")
+        self.tree.tag_configure("warn", background="#fff2cc", foreground="#7f6000")
+        self.range_select = RangeSelect(self.tree)
+        self.tree.bind("<Double-1>", lambda e: self._edit_name())
+
+        ops = ttk.Frame(self, padding=(8, 6, 8, 0))
+        ops.pack(fill=tk.X)
+        ttk.Label(ops, text="選んだ行を:").pack(side=tk.LEFT)
+        ttk.Button(ops, text="作品フォルダ名を入力...", command=self._edit_name).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="作品名の長さを指定...", command=self._set_length).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="動かさない", command=lambda: self._set_selected(None)).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="放送局の直下へ", command=lambda: self._set_selected("")).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="自動提案に戻す", command=self._reset_selected).pack(side=tk.LEFT, padx=(6, 0))
+
+        bottom = ttk.Frame(self, padding=8)
+        bottom.pack(fill=tk.X)
+        ttk.Checkbutton(bottom, text="手で決めた名前を、次回の自動提案に使う", variable=self.remember_var).pack(side=tk.LEFT)
+        self.run_button = ttk.Button(bottom, text="実行(移動する)", command=self._run)
+        self.run_button.pack(side=tk.RIGHT)
+        self.undo_button = ttk.Button(bottom, text="直前の仕分けを元に戻す", command=self._undo)
+        self.undo_button.pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Label(self, textvariable=self.info_var).pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        attach_tooltips(self)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.reload()
+
+    # ---- 読み込み・表示 ----
+    def reload(self):
+        self.items = scan_series_items(self.root_dir)
+        self.rules = dict(load_settings().get("series_rules", {}) or {})
+        self.dest = dict(suggest_series_destinations(self.items, self.rules))
+        self.manual = set()
+        self._render()
+        self._update_undo_button()
+
+    def _update_undo_button(self):
+        self.undo_button.config(state=tk.NORMAL if load_series_undo() else tk.DISABLED)
+
+    def _matches(self, it: dict) -> bool:
+        terms = self.app._norm_search(self.filter_var.get()).split()
+        if not terms:
+            return True
+        hay = self.app._norm_search(it["program"] + " " + it["file"] + " " + it["channel"] + " " + it["cur_series"])
+        return all(t in hay for t in terms)
+
+    def _dest_text(self, it: dict) -> str:
+        d = self.dest.get(it["path"])
+        if d is None:
+            return "(動かさない)"
+        return d if d else "(放送局の直下)"
+
+    def _is_move(self, it: dict) -> bool:
+        d = self.dest.get(it["path"])
+        return d is not None and series_key(d) != series_key(it["cur_series"])
+
+    def _sort_by(self, col: str):
+        asc = not (self.sort_state[0] == col and self.sort_state[1])
+        self.sort_state = (col, asc)
+        self._render()
+
+    def _render(self):
+        selected_paths = {self.rows[i] for i in self.tree.selection() if i in self.rows}
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        self.rows = {}
+        shown = [it for it in self.items if self._matches(it)]
+        col, asc = self.sort_state
+        keyfn = {
+            "file": lambda it: it["file"], "program": lambda it: it["program"], "channel": lambda it: it["channel"],
+            "now": lambda it: it["cur_series"], "dest": lambda it: self._dest_text(it),
+        }.get(col)
+        if keyfn:
+            shown.sort(key=lambda it: self.app._norm_search(keyfn(it)), reverse=not asc)
+        moves = 0
+        reselect = []
+        for it in shown:
+            move = self._is_move(it)
+            moves += move
+            d = self.dest.get(it["path"])
+            tag = "keep" if d is None else ("move" if move else "keep")
+            if it.get("deep") and move:
+                tag = "warn"
+            iid = self.tree.insert("", "end", tags=(tag,), values=(
+                it["file"], it["program"], it["channel"], it["cur_series"] or "(放送局の直下)", self._dest_text(it)))
+            self.rows[iid] = it["path"]
+            if it["path"] in selected_paths:
+                reselect.append(iid)
+        if reselect:
+            self.tree.selection_set(reselect)
+        for c, label in self._labels.items():
+            self.tree.heading(c, text=label + ((" ▲" if asc else " ▼") if c == col else ""))
+        total_moves = sum(self._is_move(it) for it in self.items)
+        self.info_var.set(
+            f"{len(shown)} / {len(self.items)}件を表示  /  移動する予定: {total_moves}件(緑の行)"
+            "  ※ 仕分けフォルダ内の放送局フォルダにあるファイルが対象です")
+
+    # ---- 編集 ----
+    def _selected_items(self) -> List[dict]:
+        paths = {self.rows[i] for i in self.tree.selection() if i in self.rows}
+        return [it for it in self.items if it["path"] in paths]
+
+    def _need_selection(self) -> List[dict]:
+        sel = self._selected_items()
+        if not sel:
+            messagebox.showinfo("情報", "行を選んでください。", parent=self)
+        return sel
+
+    def _set_selected(self, value: Optional[str], manual: bool = True):
+        sel = self._need_selection()
+        for it in sel:
+            self.dest[it["path"]] = value
+            if manual:
+                self.manual.add(it["path"])
+        if sel:
+            self._render()
+
+    def _edit_name(self):
+        sel = self._need_selection()
+        if not sel:
+            return
+        current = self.dest.get(sel[0]["path"])
+        initial = current if current else suggest_series_name(sel[0]["program"])
+        name = simpledialog.askstring(
+            "作品フォルダ名", f"選んだ{len(sel)}件を入れる作品フォルダ名を入力してください。\n"
+                              "(空欄にすると、放送局フォルダの直下へ置きます)",
+            initialvalue=initial, parent=self)
+        if name is None:
+            return
+        self._set_selected(series_folder_name(name))
+
+    def _set_length(self):
+        sel = self._need_selection()
+        if not sel:
+            return
+        base = clean_program_title(sel[0]["program"])
+        n = simpledialog.askinteger(
+            "作品名の長さ",
+            f"番組名の先頭から何文字を作品名にしますか?(選んだ{len(sel)}件すべてに使います)\n\n"
+            f"例: 「{base}」\n  →  7 なら「{base[:7]}」(話数や[二]などは除いた名前の先頭から数えます)",
+            initialvalue=min(len(suggest_series_name(sel[0]["program"])), max(1, len(base))),
+            minvalue=1, maxvalue=200, parent=self)
+        if not n:
+            return
+        for it in sel:
+            self.dest[it["path"]] = series_folder_name(clean_program_title(it["program"])[:n])
+            self.manual.add(it["path"])
+        self._render()
+
+    def _reset_selected(self):
+        sel = self._need_selection()
+        if not sel:
+            return
+        auto = suggest_series_destinations(self.items, self.rules)
+        for it in sel:
+            self.dest[it["path"]] = auto.get(it["path"])
+            self.manual.discard(it["path"])
+        self._render()
+
+    # ---- 実行・元に戻す ----
+    def _build_plan(self) -> List[Tuple[str, str, dict]]:
+        plan = []
+        for it in self.items:
+            if not self._is_move(it):
+                continue
+            target = resolve_series_target_dir(self.root_dir, it["channel"], self.dest[it["path"]])
+            if os.path.normcase(os.path.abspath(target)) == os.path.normcase(os.path.abspath(os.path.dirname(it["path"]))):
+                continue
+            plan.append((it["path"], target, it))
+        return plan
+
+    def _run(self):
+        if self._busy:
+            return
+        if self.app.scanning or self.app.encoding_running:
+            messagebox.showinfo("情報", "スキャンまたはエンコード中は仕分けできません。", parent=self)
+            return
+        plan = self._build_plan()
+        if not plan:
+            messagebox.showinfo("情報", "移動するファイルがありません。", parent=self)
+            return
+        groups: Dict[str, int] = {}
+        for _p, target, it in plan:
+            label = os.path.relpath(target, self.root_dir)
+            groups[label] = groups.get(label, 0) + 1
+        lines = [f"  ・{k}  ({v}本)" for k, v in sorted(groups.items())]
+        preview = "\n".join(lines[:15]) + (f"\n  ...ほか{len(lines) - 15}フォルダ" if len(lines) > 15 else "")
+        if not messagebox.askyesno(
+                "仕分けの確認",
+                f"{len(plan)}本(mkv/mp4と対のcsv)を、次のフォルダへ移動します。\n"
+                "移動先に同名のファイルがあるものは、動かさずに残します。\n"
+                "実行後は「直前の仕分けを元に戻す」で戻せます。\n\n" + preview + "\n\n続行しますか?", parent=self):
+            return
+        self._busy = True
+        self.run_button.config(state=tk.DISABLED)
+        self.info_var.set("移動中...")
+        self.update_idletasks()
+        moved, errors = execute_series_moves([(p, t) for p, t, _it in plan])
+        if moved:
+            save_series_undo(moved)
+        if self.remember_var.get():
+            self._remember_rules([it for _p, _t, it in plan if it["path"] in self.manual])
+        self._busy = False
+        self.run_button.config(state=tk.NORMAL)
+        self.reload()
+        self.app.after(0, lambda: getattr(self.app, "_done_loaded", False) and self.app.refresh_done_list())
+        msg = f"{len(moved)}本を移動しました。"
+        if errors:
+            msg += "\n\n動かせなかったもの:\n" + "\n".join(errors[:10]) + (f"\n...ほか{len(errors) - 10}件" if len(errors) > 10 else "")
+            messagebox.showwarning("仕分け", msg, parent=self)
+        else:
+            messagebox.showinfo("仕分け", msg, parent=self)
+
+    def _remember_rules(self, moved_items: List[dict]):
+        settings = load_settings()
+        rules = dict(settings.get("series_rules", {}) or {})
+        for it in moved_items:
+            name = self.dest.get(it["path"])
+            if not name:
+                continue
+            base_key = series_key(clean_program_title(it["program"]))
+            key = series_key(name)
+            if not base_key.startswith(key):
+                key = base_key
+            if key:
+                rules[key] = name
+        settings["series_rules"] = rules
+        save_settings(settings)
+
+    def _undo(self):
+        moved = load_series_undo()
+        if not moved:
+            messagebox.showinfo("情報", "元に戻せる仕分けの記録がありません。", parent=self)
+            self._update_undo_button()
+            return
+        if not messagebox.askyesno(
+                "元に戻す", f"直前の仕分けで動かした {len(moved)}本を、元の場所へ戻します。\n"
+                            "空になった作品フォルダは削除します。続行しますか?", parent=self):
+            return
+        restored, errors = undo_series_moves(moved, self.root_dir)
+        clear_series_undo()
+        self.reload()
+        self.app.after(0, lambda: getattr(self.app, "_done_loaded", False) and self.app.refresh_done_list())
+        msg = f"{restored}本を元の場所へ戻しました。"
+        if errors:
+            messagebox.showwarning("元に戻す", msg + "\n\n戻せなかったもの:\n" + "\n".join(errors[:10]), parent=self)
+        else:
+            messagebox.showinfo("元に戻す", msg, parent=self)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -3570,6 +4134,8 @@ class App(tk.Tk):
         tool_menu.add_separator()
         tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
         tool_menu.add_separator()
+        tool_menu.add_command(label="作品ごとに仕分け(仕分け済みの放送局フォルダの中を、作品名のフォルダに分ける)...",
+                              command=self._open_series_sort)
         tool_menu.add_command(label="縦横比を直す(変換済みmkv/mp4。再エンコードなし)...", command=self._open_aspect_fix)
         menubar.add_cascade(label="ツール", menu=tool_menu)
         self.sort_button = MenuEntryProxy(tool_menu, 0)
@@ -3802,6 +4368,24 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     # 変換済みm2tsの削除
     # ------------------------------------------------------------------
+    def _open_series_sort(self):
+        """作品ごとに仕分けるウインドウ(開いていれば前面に出す)"""
+        if self.scanning or self.encoding_running:
+            messagebox.showinfo("情報", "スキャンまたはエンコード中は開けません。")
+            return
+        win = getattr(self, "_series_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        if not os.path.isdir(get_sort_root()):
+            messagebox.showinfo("情報", "「仕分け」フォルダがまだありません。先に「チャンネル別に仕分け」を実行してください。")
+            return
+        self._series_win = SeriesSortWindow(self)
+
     def _open_aspect_fix(self):
         """縦横比を直すウインドウ(開いていれば前面に出す)"""
         win = getattr(self, "_aspect_win", None)
@@ -4007,7 +4591,9 @@ class App(tk.Tk):
                 skipped_unconverted += 1
                 continue
             dest_dir = os.path.join(root, folder_name)
-            if os.path.normcase(os.path.dirname(output_path)) == os.path.normcase(dest_dir):
+            out_dir = os.path.normcase(os.path.abspath(os.path.dirname(output_path)))
+            dest_norm = os.path.normcase(os.path.abspath(dest_dir))
+            if out_dir == dest_norm or out_dir.startswith(dest_norm + os.sep):  # 作品フォルダの中も仕分け済み
                 already_sorted += 1
                 continue
             plan.append((iid, output_path, dest_dir, data.get("channel", "")))
@@ -4147,7 +4733,7 @@ class App(tk.Tk):
             outside = []
         inside = list_sorted_videos(root) if os.path.isdir(root) else []
         known_channels = {d.get("channel", "") for d in self.row_data.values()}
-        known_channels |= {os.path.basename(d) for d in list_sorted_dirs()[1:]}
+        known_channels |= {os.path.basename(d) for d in list_channel_dirs()}
 
         entries: List[dict] = []
         for path in outside + inside:
@@ -4163,7 +4749,8 @@ class App(tk.Tk):
             if is_sorted:
                 state, label = "sorted", "済"
                 if not channel:
-                    channel = os.path.basename(os.path.dirname(path))
+                    _rel = os.path.relpath(path, root).split(os.sep)
+                    channel = _rel[0] if len(_rel) > 1 else os.path.basename(os.path.dirname(path))
             elif channel_folder_name(channel):
                 state, label = "unsorted", "未"
             else:
