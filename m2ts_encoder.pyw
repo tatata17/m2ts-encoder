@@ -1939,7 +1939,7 @@ set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.csv "%NAME%".csv
 
 set "error_log_prefix=ffmpeg_error_"
@@ -1949,12 +1949,12 @@ ffmpeg -scan_all_pmts 1 -probesize 500M -analyzeduration 500M -i "%1" -fflags +d
 
 REM -bsf:a aac_adtstoasc 2> %error_log_prefix%%~n1.log
 
-for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b -d') do set NAME=%%A
+for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b -d') do set "NAME=%%A"
 set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.mkv "%NAME%.mkv"
 
 REM del %1
@@ -1972,12 +1972,12 @@ pause
 if not "%RPLSINFO_SOURCE%"=="" (set "INFOSRC=%RPLSINFO_SOURCE%") else (set "INFOSRC=%1")
 rplsinfo.exe "%INFOSRC%" %1.csv -T -f -b -d -t -c -i -e
 
-for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set NAME=%%A
+for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set "NAME=%%A"
 set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.csv "%NAME%".csv
 
 chcp 65001
@@ -1988,12 +1988,12 @@ REM 2> %error_log_prefix%%~n1.log
 chcp 932
 
 
-for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set NAME=%%A
+for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set "NAME=%%A"
 set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.mp4 "%NAME%.mp4"
 
 if "%~2"=="" GOTO EXIT
@@ -2013,7 +2013,7 @@ set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.csv "%NAME%".csv
 
 set "error_log_prefix=ffmpeg_error_"
@@ -2023,12 +2023,12 @@ ffmpeg -scan_all_pmts 1 -probesize 500M -analyzeduration 500M -i "%1" -fflags +d
 
 REM -bsf:a aac_adtstoasc 2> %error_log_prefix%%~n1.log
 
-for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b -d') do set NAME=%%A
+for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b -d') do set "NAME=%%A"
 set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.mp4 "%NAME%.mp4"
 
 REM del %1
@@ -2050,7 +2050,7 @@ set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.csv "%NAME%".csv
 
 set "error_log_prefix=ffmpeg_error_"
@@ -2060,12 +2060,12 @@ ffmpeg -scan_all_pmts 1 -probesize 500M -analyzeduration 500M -i "%1" -fflags +d
 
 REM -bsf:a aac_adtstoasc 2> %error_log_prefix%%~n1.log
 
-for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b -d') do set NAME=%%A
+for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b -d') do set "NAME=%%A"
 set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.mkv "%NAME%.mkv"
 
 REM del %1
@@ -2096,7 +2096,7 @@ set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.mp4 "%NAME%.mp4"
 rename %1.csv "%NAME%.csv"
 
@@ -2117,12 +2117,12 @@ pause
 if not "%RPLSINFO_SOURCE%"=="" (set "INFOSRC=%RPLSINFO_SOURCE%") else (set "INFOSRC=%1")
 rplsinfo.exe "%INFOSRC%" %1.csv -T -f -b -d -t -c -i -e
 
-for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set NAME=%%A
+for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set "NAME=%%A"
 set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.csv "%NAME%".csv
 
 chcp 65001
@@ -2133,12 +2133,12 @@ REM 2> %error_log_prefix%%~n1.log
 chcp 932
 
 
-for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set NAME=%%A
+for /f "DELIMS=" %%A in ('call rplsinfo.exe "%INFOSRC%" -b') do set "NAME=%%A"
 set "NAME=%NAME:/=%"
 set "NAME=%NAME:\\=`%"
 set "NAME=%NAME:?=$%"
 set "NAME=%NAME::=;%"
-echo %NAME%
+echo "%NAME%"
 rename %1.mp4 "%NAME%.mp4"
 
 if "%~2"=="" GOTO EXIT
@@ -2805,7 +2805,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.28.1"
+APP_VERSION = "2026.10.28.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
