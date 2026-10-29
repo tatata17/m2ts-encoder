@@ -2892,7 +2892,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.1"
+APP_VERSION = "2026.10.30.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6632,6 +6632,9 @@ class App(tk.Tk):
                 pass
             if not manual:
                 self._append_log(f"[アップデート] 新しい版 {info['version']} があります。メニュー「ヘルプ」→「アップデートを確認」から更新できます。")
+                if self.encoding_running or self.scanning:
+                    return   # 作業中は邪魔しない(ログとメニューの表示だけ)
+                self._confirm_and_update(info)   # 起動時の確認でも、更新の案内を自動で出す
                 return
             self._confirm_and_update(info)
 
