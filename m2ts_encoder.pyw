@@ -2720,6 +2720,110 @@ class Tooltip:
             self._tip = None
 
 
+MENU_TIPS = {
+    "ファイル": "再スキャンや、一覧のCSV保存、終了。",
+    "ツール": "仕分け・縦横比の修正・二重エンコードの削除など、たまに使う機能。",
+    "設定": "エンコード設定とバッチファイルの管理。",
+    "ログ": "実行ログの保存・管理と、エンコード診断結果の表示。",
+    "ヘルプ": "アップデートの確認、旧版のバックアップ管理、バージョン情報。",
+    "再スキャン": "対象フォルダをもう一度読み直して、一覧を作り直します。",
+    "一覧をCSVに保存...": "いま表示している一覧(ファイル名・番組名・放送局など)を、CSVファイルに保存します。",
+    "終了": "アプリを終了します。エンコード中は、先に止めてください。",
+    "チャンネル別に仕分け": "変換済みのmkv/mp4と対のcsvを、「仕分け/放送局名/」のフォルダに移動します。m2tsは動かしません。",
+    "ファイル名の記号を全角に修正": "古い版で ; @ $ { } ~ ` に置き換わっていた記号を、本来の全角の記号に戻します。",
+    "変換済みm2tsを削除...": "変換済み(mkv/mp4がある)のm2tsだけを削除します。ごみ箱には入りません。mkv/mp4は削除しません。",
+    "作品ごとに仕分け": "仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。実行前に一覧で確認でき、直前の1回は元に戻せます。",
+    "縦横比を直す": "変換済みのmkv/mp4の表示の縦横比(4:3 / 16:9)だけを、再エンコードなしで書き換えます。",
+    "二重にエンコードしたファイルを探して削除": "番組名・放送日・開始時刻が同じ変換済みファイルを組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。",
+    "エンコード設定...": "エンコードの設定(プリセット)を作る・編集する画面を開きます。",
+    "バッチファイル管理...": "エンコードに使うバッチファイルを登録・編集する画面を開きます。",
+    "ログを保存...": "画面下の「実行ログ」の内容を、txtファイルに保存します。",
+    "ログフォルダを開く": "エンコードごとのログが保存される「ログ」フォルダを、エクスプローラーで開きます。",
+    "ログを管理": "ログを一覧にして、選んだものを1つのtxtや1件ずつに書き出す・内容を見る・削除する画面を開きます。",
+    "保存方法: 1つのtxtにまとめて保存": "エンコードのログを、まとめ_実行ログ.txt に1件ずつ追記して保存します(ファイルが増えません)。",
+    "保存方法: 1件ずつ別のtxtで保存": "エンコードのログを、1件ごとに別のtxtファイルにして保存します(従来の方法)。",
+    "ログフォルダのtxtを1つにまとめる": "「ログ」フォルダにある個別のtxtを、見出し付きの1つのtxtにまとめて保存します。元のログは消しません。",
+    "ログ(txt)を全削除": "「ログ」フォルダのtxt(まとめファイルも含む)を、すべて削除します。元に戻せません。",
+    "エンコード診断結果を表示(全件)": "これまでのエンコードの診断結果(OK / 要確認)を、全件まとめて表示します。",
+    "アップデートを確認": "新しい版があるか確認して、あれば更新します(今の版は自動でバックアップします)。",
+    "起動時に更新を確認する": "ONにすると、起動の数秒後に新しい版を確認して、あれば更新の案内を出します。",
+    "旧版のバックアップを管理": "アップデートのたびに自動で作られる旧版のバックアップを、一覧・削除・その版に戻す、ができます。",
+    "バージョン情報": "いまのバージョンと、配布元を表示します。",
+}
+
+
+class MenuTipper:
+    """メニュー項目にマウスを乗せる(またはキーで選ぶ)と、説明を小さく表示する。Tkのメニューには標準の機能が無いため、<<MenuSelect>>を使う"""
+
+    def __init__(self):
+        self._tip: Optional[tk.Toplevel] = None
+
+    def attach(self, menu: "tk.Menu"):
+        menu.bind("<<MenuSelect>>", lambda e, m=menu: self._on_select(m), add="+")
+        menu.bind("<Unmap>", lambda e: self.hide(), add="+")
+
+    def _label_of(self, menu: "tk.Menu") -> Optional[str]:
+        try:
+            idx = menu.index("active")
+            if idx is None or idx == "none":
+                return None
+            return menu.entrycget(idx, "label")
+        except tk.TclError:
+            return None
+
+    def _on_select(self, menu: "tk.Menu"):
+        label = self._label_of(menu)
+        text = None
+        if label:
+            text = MENU_TIPS.get(label)
+            if text is None:
+                for key, t in MENU_TIPS.items():
+                    if len(key) >= 4 and label.startswith(key):
+                        text = t
+                        break
+        if not text:
+            self.hide()
+            return
+        try:
+            idx = menu.index("active")
+            x = menu.winfo_rootx() + menu.winfo_width() + 2
+            y = menu.winfo_rooty() + menu.yposition(idx)
+        except tk.TclError:
+            self.hide()
+            return
+        self.show(menu, text, x, y)
+
+    def show(self, menu: "tk.Menu", text: str, x: int, y: int):
+        self.hide()
+        try:
+            tip = tk.Toplevel(menu)
+            tip.wm_overrideredirect(True)
+            for attr in ("-topmost", "-disabled"):
+                try:
+                    tip.wm_attributes(attr, True)    # -disabled: マウスやキー入力を受けない(メニューの操作を邪魔しない)
+                except tk.TclError:
+                    pass
+            tk.Label(tip, text=text, justify=tk.LEFT, wraplength=360, background="#ffffe1", foreground="#000000",
+                     relief=tk.SOLID, borderwidth=1, padx=6, pady=4).pack()
+            tip.update_idletasks()
+            w, h = tip.winfo_reqwidth(), tip.winfo_reqheight()
+            if x + w > tip.winfo_screenwidth() - 4:       # 右に入らなければ、メニューの左側に出す
+                x = max(0, menu.winfo_rootx() - w - 2)
+            y = max(0, min(y, tip.winfo_screenheight() - h - 4))
+            tip.wm_geometry(f"+{x}+{y}")
+            self._tip = tip
+        except tk.TclError:
+            self._tip = None
+
+    def hide(self):
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except tk.TclError:
+                pass
+            self._tip = None
+
+
 def _tooltip_text_for(label: str) -> Optional[str]:
     label = (label or "").strip()
     if not label:
@@ -2896,7 +3000,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.8"
+APP_VERSION = "2026.10.30.9"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5360,6 +5464,11 @@ class App(tk.Tk):
         help_menu.add_command(label="バージョン情報", command=self._show_about)
         menubar.add_cascade(label="ヘルプ", menu=help_menu)
         self._help_menu = help_menu
+
+        # メニュー項目にも、ツールチップ(説明)を出す
+        self._menu_tipper = MenuTipper()
+        for m in (menubar, file_menu, tool_menu, settings_menu, log_menu, help_menu):
+            self._menu_tipper.attach(m)
 
         self.configure(menu=menubar)
 
