@@ -2767,6 +2767,92 @@ class MenuTipper:
 
     def install(self):
         self.app.bind_class("Menu", "<<MenuSelect>>", self._on_event, add="+")
+        self._select_events = 0
+        if sys.platform == "win32":
+            # WindowsのメニューはTkに通知が届かないことがあるため、Windowsのメニュー自体に問い合わせる方式も併用する
+            self.app.after(500, self._poll_win)
+
+    def _poll_win(self):
+        try:
+            self._poll_win_once()
+        except Exception:
+            pass
+        try:
+            self.app.after(120, self._poll_win)
+        except tk.TclError:
+            pass
+
+    def _poll_win_once(self):
+        """開いているメニュー(Windowsの #32768 ウインドウ)の、マウスが乗っている項目の文字を読んで、説明を出す"""
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+        hwnd = user32.FindWindowW("#32768", None)
+        if not hwnd or not user32.IsWindowVisible(hwnd):
+            if self._tip is not None or self._saved_status is not None:
+                self._restore_status()
+                self.hide()
+            self._last_item = None
+            return
+        hmenu = user32.SendMessageW(hwnd, 0x01E1, 0, 0)        # MN_GETHMENU
+        if not hmenu:
+            return
+
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+        pt = POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        user32.MenuItemFromPoint.argtypes = [wintypes.HWND, ctypes.c_void_p, POINT]
+        user32.MenuItemFromPoint.restype = ctypes.c_int
+        idx = user32.MenuItemFromPoint(None, hmenu, pt)
+        if idx < 0:
+            self._last_item = None
+            self._restore_status()
+            self.hide()
+            return
+        if getattr(self, "_last_item", None) == (hmenu, idx):
+            return
+        self._last_item = (hmenu, idx)
+        buf = ctypes.create_unicode_buffer(512)
+        user32.GetMenuStringW.argtypes = [ctypes.c_void_p, wintypes.UINT, wintypes.LPWSTR, ctypes.c_int, wintypes.UINT]
+        user32.GetMenuStringW(hmenu, idx, buf, 512, 0x400)    # MF_BYPOSITION
+        label = buf.value.split("\t")[0].replace("&", "")
+        text = self._text_for(label)
+        if self._debug_left > 0 and label:
+            self._debug_left -= 1
+            try:
+                self.app._append_log(f"[メニュー説明] (Windowsのメニューから読みました) {label[:30]} → {'説明あり' if text else '説明なし'}")
+            except Exception:
+                pass
+        if not text:
+            self._restore_status()
+            self.hide()
+            return
+        rect = RECT()
+        user32.GetMenuItemRect.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(RECT)]
+        user32.GetMenuItemRect(None, hmenu, idx, ctypes.byref(rect))
+        win = RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(win))
+        if self._saved_status is None:
+            self._saved_status = self.app.status_var.get()
+        self.app.status_var.set(text)
+        self.show(None, text, win.right + 2, rect.top, left_x=win.left)
+
+    def _text_for(self, label: str) -> Optional[str]:
+        text = MENU_TIPS.get(label)
+        if text is None:
+            for key, t in MENU_TIPS.items():
+                if len(key) >= 4 and label.startswith(key):
+                    return t
+        return text
 
     def _on_event(self, event):
         menu = event.widget
@@ -2788,6 +2874,7 @@ class MenuTipper:
                     if len(key) >= 4 and label.startswith(key):
                         text = t
                         break
+        self._select_events += 1
         if self._debug_left > 0 and label:
             self._debug_left -= 1
             try:
@@ -2824,7 +2911,7 @@ class MenuTipper:
             self.app.status_var.set(self._saved_status)
             self._saved_status = None
 
-    def show(self, menu: "tk.Menu", text: str, x: int, y: int):
+    def show(self, menu: Optional["tk.Menu"], text: str, x: int, y: int, left_x: Optional[int] = None):
         self.hide()
         try:
             tip = tk.Toplevel(self.app)
@@ -2838,7 +2925,7 @@ class MenuTipper:
             tip.update_idletasks()
             w, h = tip.winfo_reqwidth(), tip.winfo_reqheight()
             if x + w > tip.winfo_screenwidth() - 4:       # 右に入らなければ、メニューの左側に出す
-                x = max(0, menu.winfo_rootx() - w - 2)
+                x = max(0, (menu.winfo_rootx() if menu is not None else (left_x or 0)) - w - 2)
             y = max(0, min(y, tip.winfo_screenheight() - h - 4))
             tip.wm_geometry(f"+{x}+{y}")
             self._tip = tip
@@ -3030,7 +3117,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.10"
+APP_VERSION = "2026.10.30.11"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
