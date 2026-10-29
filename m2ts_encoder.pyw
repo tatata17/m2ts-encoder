@@ -2892,7 +2892,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.2"
+APP_VERSION = "2026.10.30.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -7811,6 +7811,21 @@ class App(tk.Tk):
         ttk.Button(button_frame, text="閉じる", command=dialog.destroy).pack(side=tk.LEFT)
 
 
+def set_taskbar_identity():
+    """
+    Windowsのタスクバーは、同じpython.exeで動く窓を1つのアイコンにまとめてしまう。
+    このアプリ専用のID(AppUserModelID)を付けて、他のpywとは別のアイコンとして表示させる。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("tatata17.m2ts-encoder")
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    set_taskbar_identity()
     app = App()
     app.mainloop()
