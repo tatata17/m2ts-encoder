@@ -2568,6 +2568,12 @@ TOOLTIP_TEXTS = {
     "作品名の長さを指定...": "番組名の先頭から何文字を作品名にするかを数で決めます。話数や[二]は除いた名前から数えます。",
     "動かさない": "選んだ行は、今の場所のままにします。",
     "放送局の直下へ": "選んだ行を、作品フォルダではなく放送局フォルダの直下に置きます。",
+    "削除にする(この行)": "選んだ行を「削除」にします(実行するまでは何も削除されません)。ダブルクリックでも切り替えられます。",
+    "残す(この行)": "選んだ行を「残す」にします。",
+    "この組を最初の提案に戻す": "選んだ行の組を、最初の提案(1本だけ残す。長さが違う組は全部残す)に戻します。",
+    "ファイルの場所を開く": "選んだ行のファイルを、エクスプローラーで開きます。",
+    "実行(削除の行を削除する)": "「削除」の行の動画と、対のcsvを削除します。ごみ箱には入らず、元に戻せません。",
+    "読み直す": "変換済みの一覧を読み直して、二重のものを探し直します(手で決めた内容は消えます)。",
     "自動提案に戻す": "選んだ行の移動先を、自動の提案に戻します(手で決めた内容は消えます)。",
     "手で決めた名前を、次回の自動提案に使う": "ONにすると、手で決めた作品名を覚えて、次回から同じ作品を自動でその名前に振り分けます。",
     "実行(移動する)": "緑の行を、確認のあとで作品フォルダへ移動します。mkv/mp4と対のcsvを一緒に動かします。",
@@ -2869,7 +2875,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.7"
+APP_VERSION = "2026.10.29.8"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3633,6 +3639,383 @@ def change_aspect_copy(ffmpeg: str, path: str, target: str, keep_original: bool,
         return False, str(e)
 
 
+def probe_duration_seconds(path: str) -> Optional[float]:
+    """ffprobeで再生時間(秒)を読む。読めなければ None"""
+    ffprobe = find_ffprobe()
+    if not ffprobe:
+        return None
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30, creationflags=flags,
+        ).stdout.strip()
+        return float(out.splitlines()[0]) if out else None
+    except (OSError, ValueError, subprocess.SubprocessError, IndexError):
+        return None
+
+
+def format_duration_text(sec: Optional[float]) -> str:
+    if sec is None:
+        return "…"
+    s = int(round(sec))
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
+
+
+DUP_LENGTH_TOLERANCE_SEC = 3.0   # 長さの差がこれ以内なら「同じ番組を2回エンコードした」とみなす
+
+
+def duplicate_group_key(entry: dict, norm) -> Tuple[str, str, str]:
+    """
+    二重エンコードの候補をまとめるキー。対のcsvから読めた(番組名, 放送日)が同じなら同じグループ。
+    csvが無いものは、ファイル名から末尾の連番「(2)」を除いたものを使う。
+    """
+    if entry.get("program"):
+        return ("p", norm(entry["program"]), entry.get("date", ""))
+    stem = os.path.splitext(entry["file"])[0]
+    return ("f", norm(re.sub(r"\(\d+\)$", "", stem)), "")
+
+
+class DuplicateEncodeWindow(tk.Toplevel):
+    """
+    「二重にエンコードしたファイルを探す」: 変換済みのmkv/mp4のうち、同じ番組(番組名と放送日が同じ)が
+    2本以上あるものをグループにして並べ、1本ずつ「残す / 削除」を決めて、まとめて削除する。
+    最初は各グループで1本だけ残し、あとは削除の予定にしておく(長さが違うものは別の放送かもしれないので全部残す)。
+    削除は、動画と対のcsvを完全に削除する(ごみ箱には入らない)。
+    """
+
+    COLS = (("group", "組", 44), ("file", "ファイル", 280), ("program", "番組名", 220), ("channel", "放送局", 110),
+            ("date", "放送日", 84), ("where", "場所", 150), ("size", "サイズ", 80), ("length", "長さ", 70),
+            ("mtime", "作成日時", 120), ("action", "処理", 64))
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        self.title("二重にエンコードしたファイルを探す")
+        self.geometry("1280x640")
+        self.minsize(820, 420)
+        self.entries: List[dict] = []          # グループに入った変換済みファイル
+        self.action: Dict[str, str] = {}       # path -> "keep" / "delete"
+        self.manual: set = set()               # 手で変えた行(長さがわかっても、勝手に戻さない)
+        self.lengths: Dict[str, Optional[float]] = {}
+        self.group_of: Dict[str, int] = {}
+        self.rows: Dict[str, str] = {}         # iid -> path
+        self.sort_state: Tuple[str, bool] = ("group", True)
+        self.filter_var = tk.StringVar()
+        self.info_var = tk.StringVar()
+        self.q: "queue.Queue" = queue.Queue()
+        self._gen = 0
+
+        top = ttk.Frame(self, padding=(8, 6))
+        top.pack(fill=tk.X)
+        ttk.Label(top, text="絞り込み:").pack(side=tk.LEFT)
+        ttk.Entry(top, textvariable=self.filter_var, width=34).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(top, text="クリア", command=lambda: self.filter_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(top, text="読み直す", command=self.reload).pack(side=tk.RIGHT)
+        self.filter_var.trace_add("write", lambda *_: self._render())
+
+        mid = ttk.Frame(self)
+        mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.tree = ttk.Treeview(mid, columns=[c for c, _l, _w in self.COLS], show="headings", selectmode="extended")
+        self._labels = {}
+        for c, label, w in self.COLS:
+            self._labels[c] = label
+            self.tree.heading(c, text=label, command=lambda col=c: self._sort_by(col))
+            self.tree.column(c, width=w, anchor="e" if c in ("size", "length", "group") else "w")
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.tag_configure("delete", background="#ffc7ce", foreground="#9c0006")
+        self.tree.tag_configure("keep", background="#c6efce", foreground="#006100")
+        self.tree.tag_configure("warn", background="#fff2cc", foreground="#7f6000")
+        self.range_select = RangeSelect(self.tree)
+        self.tree.bind("<Double-1>", lambda e: self._toggle_clicked())
+
+        ops = ttk.Frame(self, padding=(8, 6, 8, 0))
+        ops.pack(fill=tk.X)
+        ttk.Label(ops, text="選んだ行を:").pack(side=tk.LEFT)
+        ttk.Button(ops, text="削除にする(この行)", command=lambda: self._set_selected("delete")).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="残す(この行)", command=lambda: self._set_selected("keep")).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="この組を最初の提案に戻す", command=self._reset_selected).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="ファイルの場所を開く", command=self._open_location).pack(side=tk.LEFT, padx=(14, 0))
+
+        bottom = ttk.Frame(self, padding=8)
+        bottom.pack(fill=tk.X)
+        self.run_button = ttk.Button(bottom, text="実行(削除の行を削除する)", command=self._run)
+        self.run_button.pack(side=tk.RIGHT)
+        ttk.Label(self, textvariable=self.info_var).pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        attach_tooltips(self)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.after(150, self._poll)
+        self.reload()
+
+    def _close(self):
+        self._gen += 1
+        self.destroy()
+
+    # ---- 読み込み ----
+    def reload(self):
+        if self.app.encoding_running or self.app.scanning:
+            messagebox.showinfo("情報", "スキャンまたはエンコード中は読み込めません。", parent=self)
+            return
+        self.app.refresh_done_list()
+        norm = self.app._norm_search
+        groups: Dict[Tuple[str, str, str], List[dict]] = {}
+        for e in list(getattr(self.app, "_done_all", [])):
+            groups.setdefault(duplicate_group_key(e, norm), []).append(e)
+        self.entries = []
+        self.group_of = {}
+        self.action = {}
+        self.manual = set()
+        self.lengths = {}
+        multi = sorted((g for g in groups.values() if len(g) >= 2),
+                       key=lambda g: (norm(g[0]["program"] or g[0]["file"]), g[0].get("date", "")))
+        for gi, members in enumerate(multi, 1):
+            for e in members:
+                try:
+                    st = os.stat(e["path"])
+                    e["size"], e["mtime"] = st.st_size, st.st_mtime
+                except OSError:
+                    e["size"], e["mtime"] = 0, 0.0
+            # 残す1本: 仕分け済み > 連番「(2)」の付かない名前 > 作成日時が古い
+            members.sort(key=lambda e: (e["state"] != "sorted",
+                                        bool(re.search(r"\(\d+\)$", os.path.splitext(e["file"])[0])),
+                                        e["mtime"], e["file"]))
+            for k, e in enumerate(members):
+                self.group_of[e["path"]] = gi
+                self.action[e["path"]] = "keep" if k == 0 else "delete"
+                self.entries.append(e)
+        self._render()
+        self._gen += 1
+        gen = self._gen
+        paths = [e["path"] for e in self.entries]
+        threading.Thread(target=self._probe_lengths, args=(gen, paths), daemon=True).start()
+
+    def _probe_lengths(self, gen: int, paths: List[str]):
+        for p in paths:
+            if gen != self._gen:
+                return
+            self.q.put((gen, p, probe_duration_seconds(p)))
+
+    def _poll(self):
+        got = False
+        try:
+            while True:
+                gen, path, sec = self.q.get_nowait()
+                if gen == self._gen:
+                    self.lengths[path] = sec
+                    got = True
+        except queue.Empty:
+            pass
+        if got:
+            self._apply_lengths()
+        try:
+            self.after(400, self._poll)
+        except tk.TclError:
+            pass
+
+    def _apply_lengths(self):
+        """長さが読めたグループで、長さが違うもの(別の放送かもしれない)は、全部「残す」にして黄色で示す"""
+        changed = False
+        by_group: Dict[int, List[dict]] = {}
+        for e in self.entries:
+            by_group.setdefault(self.group_of[e["path"]], []).append(e)
+        self.diff_groups = getattr(self, "diff_groups", set())
+        for gi, members in by_group.items():
+            if any(e["path"] not in self.lengths for e in members):
+                continue
+            vals = [self.lengths[e["path"]] for e in members if self.lengths[e["path"]] is not None]
+            if len(vals) < 2:
+                continue
+            differ = (max(vals) - min(vals)) > DUP_LENGTH_TOLERANCE_SEC
+            if differ and gi not in self.diff_groups:
+                self.diff_groups.add(gi)
+                for e in members:
+                    if e["path"] not in self.manual:
+                        self.action[e["path"]] = "keep"
+                changed = True
+        self._render()
+
+    # ---- 表示 ----
+    def _matches(self, e: dict) -> bool:
+        terms = self.app._norm_search(self.filter_var.get()).split()
+        if not terms:
+            return True
+        hay = self.app._norm_search(e["program"] + " " + e["file"] + " " + e["channel_text"])
+        return all(t in hay for t in terms)
+
+    def _sort_by(self, col: str):
+        asc = not (self.sort_state[0] == col and self.sort_state[1])
+        self.sort_state = (col, asc)
+        self._render()
+
+    def _row_values(self, e: dict):
+        sz = e.get("size", 0)
+        size_text = f"{sz / 1024 / 1024:,.0f} MB"
+        mt = time.strftime("%Y/%m/%d %H:%M", time.localtime(e["mtime"])) if e.get("mtime") else ""
+        act = "削除" if self.action.get(e["path"]) == "delete" else "残す"
+        return (self.group_of[e["path"]], e["file"], e["program"], e["channel_text"], e["date"], e["where"],
+                size_text, format_duration_text(self.lengths.get(e["path"], None)) if e["path"] in self.lengths else "…",
+                mt, act)
+
+    def _render(self):
+        selected = {self.rows[i] for i in self.tree.selection() if i in self.rows}
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        self.rows = {}
+        shown = [e for e in self.entries if self._matches(e)]
+        col, asc = self.sort_state
+        norm = self.app._norm_search
+        keyfn = {
+            "group": None,
+            "file": lambda e: norm(e["file"]), "program": lambda e: norm(e["program"]),
+            "channel": lambda e: norm(e["channel_text"]), "date": lambda e: e["date"],
+            "where": lambda e: norm(e["where"]), "size": lambda e: e.get("size", 0),
+            "length": lambda e: self.lengths.get(e["path"]) or 0, "mtime": lambda e: e.get("mtime", 0),
+            "action": lambda e: self.action.get(e["path"], ""),
+        }.get(col)
+        if keyfn is None:
+            if not asc:
+                shown = list(reversed(shown))
+        else:
+            shown.sort(key=keyfn, reverse=not asc)
+        reselect = []
+        diff = getattr(self, "diff_groups", set())
+        for e in shown:
+            gi = self.group_of[e["path"]]
+            tag = "delete" if self.action.get(e["path"]) == "delete" else ("warn" if gi in diff else "keep")
+            iid = self.tree.insert("", "end", tags=(tag,), values=self._row_values(e))
+            self.rows[iid] = e["path"]
+            if e["path"] in selected:
+                reselect.append(iid)
+        if reselect:
+            self.tree.selection_set(reselect)
+        for c, label in self._labels.items():
+            self.tree.heading(c, text=label + ((" ▲" if asc else " ▼") if c == col else ""))
+        dels = [e for e in self.entries if self.action.get(e["path"]) == "delete"]
+        total = sum(e.get("size", 0) for e in dels)
+        n_groups = len(set(self.group_of.values()))
+        if not self.entries:
+            self.info_var.set("同じ番組(番組名と放送日が同じ)が2本以上あるファイルは見つかりませんでした。")
+        else:
+            self.info_var.set(
+                f"{len(shown)} / {len(self.entries)}件を表示  /  重なっている番組: {n_groups}組  /  "
+                f"削除の予定: {len(dels)}件({total / 1024 / 1024 / 1024:.2f} GB)  "
+                "※ 黄色は長さが違うので別の放送かもしれません(初期値は全部残す)。同じ組の中でダブルクリックすると残す/削除が切り替わります")
+
+    # ---- 編集 ----
+    def _selected_paths(self) -> List[str]:
+        return [self.rows[i] for i in self.tree.selection() if i in self.rows]
+
+    def _set_selected(self, act: str):
+        paths = self._selected_paths()
+        if not paths:
+            messagebox.showinfo("情報", "行を選んでください。", parent=self)
+            return
+        for p in paths:
+            self.action[p] = act
+            self.manual.add(p)
+        self._render()
+
+    def _reset_selected(self):
+        """選んだ行の組を、最初の提案(1本だけ残す。長さが違う組は全部残す)に戻す"""
+        paths = self._selected_paths()
+        if not paths:
+            messagebox.showinfo("情報", "行を選んでください。", parent=self)
+            return
+        groups = {self.group_of[p] for p in paths}
+        diff = getattr(self, "diff_groups", set())
+        seen = set()
+        for e in self.entries:      # entriesは、組ごとに「残す1本」が先頭に並んでいる
+            gi = self.group_of[e["path"]]
+            if gi not in groups:
+                continue
+            self.manual.discard(e["path"])
+            if gi in diff:
+                self.action[e["path"]] = "keep"
+            else:
+                self.action[e["path"]] = "delete" if gi in seen else "keep"
+                seen.add(gi)
+        self._render()
+
+    def _toggle_clicked(self):
+        sel = self._selected_paths()
+        if len(sel) != 1:
+            return
+        p = sel[0]
+        self.action[p] = "keep" if self.action.get(p) == "delete" else "delete"
+        self.manual.add(p)
+        self._render()
+
+    def _open_location(self):
+        paths = self._selected_paths()
+        if not paths:
+            messagebox.showinfo("情報", "行を選んでください。", parent=self)
+            return
+        p = paths[0]
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(p)])
+            else:
+                messagebox.showinfo("場所", p, parent=self)
+        except OSError as e:
+            messagebox.showerror("エラー", str(e), parent=self)
+
+    # ---- 実行 ----
+    def _run(self):
+        if self.app.encoding_running or self.app.scanning:
+            messagebox.showinfo("情報", "スキャンまたはエンコード中は削除できません。", parent=self)
+            return
+        dels = [e for e in self.entries if self.action.get(e["path"]) == "delete" and os.path.isfile(e["path"])]
+        if not dels:
+            messagebox.showinfo("情報", "削除の予定のファイルがありません。", parent=self)
+            return
+        # 同じ組の全部を削除にしている場合は、念のため別に確認する
+        all_gone = []
+        for gi in set(self.group_of.values()):
+            members = [e for e in self.entries if self.group_of[e["path"]] == gi]
+            if members and all(self.action.get(e["path"]) == "delete" for e in members):
+                all_gone.append(members[0]["program"] or members[0]["file"])
+        if all_gone:
+            if not messagebox.askyesno(
+                    "全部削除になっている組があります",
+                    "次の番組は、重なっているファイルを全部削除する設定です。\n" + "\n".join(all_gone[:8]) +
+                    ("\n…" if len(all_gone) > 8 else "") + "\n\nこの番組は1本も残りません。このまま進みますか？",
+                    icon="warning", parent=self):
+                return
+        total = sum(e.get("size", 0) for e in dels)
+        preview = "\n".join(e["file"] for e in dels[:10]) + (f"\n…ほか{len(dels) - 10}件" if len(dels) > 10 else "")
+        if not messagebox.askyesno(
+                "削除の確認",
+                f"{len(dels)}件(合計 {total / 1024 / 1024 / 1024:.2f} GB)を削除します。対のcsvも一緒に削除します。\n"
+                "ごみ箱には入らず、元には戻せません。\n\n" + preview + "\n\n削除しますか？",
+                icon="warning", parent=self):
+            return
+        ok, errors = 0, []
+        for e in dels:
+            path = e["path"]
+            try:
+                os.remove(path)
+                ok += 1
+            except OSError as ex:
+                errors.append(f"{e['file']}: {ex}")
+                continue
+            csv_path = os.path.splitext(path)[0] + ".csv"
+            if os.path.isfile(csv_path):
+                try:
+                    os.remove(csv_path)
+                except OSError as ex:
+                    errors.append(f"{os.path.basename(csv_path)}: {ex}")
+        self.app.status_var.set(f"二重にエンコードしたファイル {ok}件を削除しました。")
+        msg = f"{ok}件を削除しました。"
+        if errors:
+            msg += "\n\n削除できなかったもの:\n" + "\n".join(errors[:10])
+        messagebox.showinfo("完了", msg, parent=self)
+        self.reload()
+
+
 class SeriesSortWindow(tk.Toplevel):
     """
     「作品ごとに仕分け」: 仕分け済みの放送局フォルダ(仕分け/放送局名/)の中で、作品名のフォルダに振り分ける。
@@ -4222,6 +4605,7 @@ class App(tk.Tk):
         tool_menu.add_command(label="作品ごとに仕分け(仕分け済みの放送局フォルダの中を、作品名のフォルダに分ける)...",
                               command=self._open_series_sort)
         tool_menu.add_command(label="縦横比を直す(変換済みmkv/mp4。再エンコードなし)...", command=self._open_aspect_fix)
+        tool_menu.add_command(label="二重にエンコードしたファイルを探して削除...", command=self._open_duplicates)
         menubar.add_cascade(label="ツール", menu=tool_menu)
         self.sort_button = MenuEntryProxy(tool_menu, 0)
         self.fix_names_item = MenuEntryProxy(tool_menu, 1)
@@ -4470,6 +4854,21 @@ class App(tk.Tk):
             messagebox.showinfo("情報", "「仕分け」フォルダがまだありません。先に「チャンネル別に仕分け」を実行してください。")
             return
         self._series_win = SeriesSortWindow(self)
+
+    def _open_duplicates(self):
+        """二重にエンコードしたファイルを探すウインドウ(開いていれば前面に出す)"""
+        if self.scanning or self.encoding_running:
+            messagebox.showinfo("情報", "スキャンまたはエンコード中は開けません。")
+            return
+        win = getattr(self, "_dup_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        self._dup_win = DuplicateEncodeWindow(self)
 
     def _open_aspect_fix(self):
         """縦横比を直すウインドウ(開いていれば前面に出す)"""
