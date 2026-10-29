@@ -990,6 +990,7 @@ def analyze_ffmpeg_log(
     """
     duration_seconds: Optional[float] = None
     current_time_seconds = 0.0
+    max_time_seconds = 0.0  # 2回目(合体)で進捗が巻き戻っても、1回目の到達位置で「最後まで行けたか」を判断する
     saw_time = False
     prev_dup = 0
     prev_drop = 0
@@ -1019,6 +1020,7 @@ def analyze_ffmpeg_log(
         if time_match:
             h, m, s = time_match.groups()
             current_time_seconds = int(h) * 3600 + int(m) * 60 + float(s)
+            max_time_seconds = max(max_time_seconds, current_time_seconds)
             saw_time = True
 
         dup_match = _DUP_RE.search(line)
@@ -1064,7 +1066,7 @@ def analyze_ffmpeg_log(
 
     # 最後まで変換できていたか(Conversion failedが録画末尾の切れ目によるものか判断するため)
     reached_end = (
-        duration_seconds is not None and saw_time and (duration_seconds - current_time_seconds) <= _TAIL_SECONDS
+        duration_seconds is not None and saw_time and (duration_seconds - max_time_seconds) <= _TAIL_SECONDS
     )
 
     # corrupt decoded frame が多数あるのに、他の破損の兆候が本編中に無い場合は、
@@ -1152,11 +1154,11 @@ def analyze_ffmpeg_log(
         not fatal
         and duration_seconds is not None
         and saw_time
-        and (duration_seconds - current_time_seconds) > _TRUNCATED_SECONDS
+        and (duration_seconds - max_time_seconds) > _TRUNCATED_SECONDS
     ):
-        short_by = duration_seconds - current_time_seconds
+        short_by = duration_seconds - max_time_seconds
         significant["出力が元の長さより短く終了"] = [
-            (current_time_seconds, f"元{_seconds_to_hms(duration_seconds)}→出力{_seconds_to_hms(current_time_seconds)}、{short_by:.0f}秒不足")
+            (max_time_seconds, f"元{_seconds_to_hms(duration_seconds)}→出力{_seconds_to_hms(max_time_seconds)}、{short_by:.0f}秒不足")
         ]
 
     # dupは、他に問題がある時だけ参考情報として併記する
@@ -2862,7 +2864,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.5"
+APP_VERSION = "2026.10.29.6"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
