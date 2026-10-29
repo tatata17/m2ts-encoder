@@ -1372,7 +1372,7 @@ def probe_streams(path: str, timeout: float = 1800.0) -> Tuple[Optional[List[dic
         return None, "ffprobe が見つかりません"
     cmd = [ffprobe, "-v", "error"] + WIDE_PROBE_ARGS + ["-count_packets", "-show_entries",
            "stream=index,codec_type,codec_name,nb_read_packets,field_order,avg_frame_rate,"
-           "width,height,channels,sample_rate", "-of", "json", path]
+           "width,height,channels,sample_rate:format=start_time", "-of", "json", path]
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
         completed = subprocess.run(
@@ -1385,9 +1385,15 @@ def probe_streams(path: str, timeout: float = 1800.0) -> Tuple[Optional[List[dic
     if not streams:
         return None, "ストリーム情報を取得できませんでした"
     times = probe_stream_times(path, timeout)
+    container_start: Optional[float] = None
+    try:
+        container_start = float(json.loads(completed.stdout.decode("utf-8", errors="replace")).get("format", {}).get("start_time"))
+    except (TypeError, ValueError):
+        container_start = None
     for st in streams:
         if st["index"] in times:
             st["first_time"], st["last_time"], st["max_gap"] = times[st["index"]]
+        st["container_start"] = container_start
     return streams, ""
 
 
@@ -1597,6 +1603,12 @@ def resolve_auto_options(
         if is_mono:
             notes.append(f"音声1本・放送局「{channel_name}」→ モノラル二か国語として主/副に分離")
         notes.append(f"→ 出力は {str(o['container']).upper()}")
+    # 後から合体するときに、元のm2tsでの位置(途中から始まる音声・字幕など)を保つための基準時刻
+    start_candidates = [st.get("container_start") for st in streams if st.get("container_start") is not None]
+    if not start_candidates:
+        start_candidates = [st["first_time"] for st in streams if st.get("first_time") is not None]
+    if start_candidates:
+        o["post_ts_offset"] = float(min(start_candidates))
     if o["subs"] and o["container"] == "mkv" and o.get("sub_postmux"):
         if sub_early_note:
             notes.append(sub_early_note)
@@ -2283,6 +2295,8 @@ def normalize_encode_options(options: Optional[Dict[str, object]]) -> Dict[str, 
     for key in ("audio_ordinals", "sub_ordinals", "audio_post_ordinals", "audio_non_aac"):
         if options and isinstance(options.get(key), list):
             merged[key] = list(options[key])
+    if options and isinstance(options.get("post_ts_offset"), (int, float)):
+        merged["post_ts_offset"] = float(options["post_ts_offset"])
     if options and options.get("wide_probe"):
         merged["wide_probe"] = True
     if options and options.get("audio_desc"):
@@ -2449,6 +2463,10 @@ def build_postmux_command(options: Optional[Dict[str, object]]) -> Optional[str]
         parts += ["-scan_all_pmts", "1", "-probesize", "500M", "-analyzeduration", "500M"]
     elif o.get("wide_probe"):
         parts += WIDE_PROBE_ARGS
+    if o.get("post_ts_offset") is not None:
+        # 追加する側の時刻を、元のm2tsの先頭(container start)を0として揃える。何も指定しないと、
+        # 途中から始まる音声・字幕が、追加した側の先頭(0秒)に詰められてしまう
+        parts += ["-copyts", "-itsoffset", f"{-float(o['post_ts_offset']):.6f}"]
     parts += ["-i", '"%1"', "-map", "0"]
     for k in audio:
         parts += ["-map", f"1:a:{k}"]
@@ -2840,7 +2858,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.2"
+APP_VERSION = "2026.10.29.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
