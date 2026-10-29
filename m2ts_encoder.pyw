@@ -2591,6 +2591,10 @@ TOOLTIP_TEXTS = {
     "ファイルの場所を開く": "選んだ行のファイルを、エクスプローラーで開きます。",
     "実行(削除の行を削除する)": "「削除」の行の動画と、対のcsvを削除します。ごみ箱には入らず、元に戻せません。",
     "読み直す": "変換済みの一覧を読み直して、二重のものを探し直します(手で決めた内容は消えます)。",
+    "1つのtxtに書き出す...": "選んだログを、1つのtxtにまとめて書き出します(見出し付き。AIや他の人に見せる時に便利です)。",
+    "1件ずつ書き出す...": "選んだログを、1件ずつ別のtxtにして、選んだフォルダに書き出します。",
+    "ログを読み直す": "ログの一覧を読み直します。",
+    "従来の1件ずつのtxtを、まとめに取り込む": "「ログ」フォルダにある、従来の1件ずつのtxtを、まとめ_実行ログ.txt に追記して、元のtxtを削除します。",
     "自動提案に戻す": "選んだ行の移動先を、自動の提案に戻します(手で決めた内容は消えます)。",
     "手で決めた名前を、次回の自動提案に使う": "ONにすると、手で決めた作品名を覚えて、次回から同じ作品を自動でその名前に振り分けます。",
     "実行(移動する)": "緑の行を、確認のあとで作品フォルダへ移動します。mkv/mp4と対のcsvを一緒に動かします。",
@@ -2892,7 +2896,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.7"
+APP_VERSION = "2026.10.30.8"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3084,6 +3088,264 @@ def prune_run_logs(log_dir: str, now: Optional[float] = None) -> None:
                 pass
 
 
+# ----------------------------------------------------------------------
+# 実行ログを「1つのtxt」にまとめて保存する仕組み
+#   ログ/まとめ_実行ログ.txt に、1件分ずつ見出し付きで追記していく。あとから「ログを管理」で
+#   選んで書き出す(1つにまとめて / 1件ずつ)・削除できる。従来の「1件ずつ別のtxt」にも切り替えられる。
+# ----------------------------------------------------------------------
+LOG_STORE_NAME = MERGED_LOG_PREFIX + "実行ログ.txt"
+LOG_WORK_DIR_NAME = "_作業中"          # エンコード中のログを一時的に書く場所(終わったらまとめに追記して消す)
+LOG_SECTION_MARK = "### [実行ログ] "
+_LOG_SECTION_RULE = "=" * 70
+_LOG_STORE_LOCK = threading.Lock()
+_LOG_NAME_STAMP_RE = re.compile(r"^(\d{8})-(\d{6})_")
+
+
+def get_log_mode() -> str:
+    """"single"(1つのtxtにまとめる。既定) / "each"(1件ずつ別のtxt)"""
+    return "each" if str(load_settings().get("log_mode", "single")) == "each" else "single"
+
+
+def get_log_store_path() -> str:
+    return os.path.join(get_run_log_dir(), LOG_STORE_NAME)
+
+
+def log_name_to_time(name: str) -> Optional[datetime.datetime]:
+    m = _LOG_NAME_STAMP_RE.match(name)
+    if not m:
+        return None
+    try:
+        return datetime.datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+def _section_header(name: str) -> bytes:
+    return (f"{_LOG_SECTION_RULE}\n{LOG_SECTION_MARK}{name}\n{_LOG_SECTION_RULE}\n").encode("utf-8")
+
+
+def fold_run_log_file(temp_path: str) -> bool:
+    """1件分のログ(作業中のtxt)を、まとめファイルの末尾に追記して、作業中のtxtを消す。成功したらTrue"""
+    try:
+        with io.open(temp_path, "rb") as f:
+            body = f.read()
+    except OSError:
+        return False
+    if body.startswith(b"\xef\xbb\xbf"):
+        body = body[3:]
+    body = body.replace(b"\r\n", b"\n").rstrip(b"\n") + b"\n\n"
+    name = os.path.basename(temp_path)
+    try:
+        with _LOG_STORE_LOCK:
+            with io.open(get_log_store_path(), "ab") as out:
+                out.write(_section_header(name) + body)
+                out.flush()
+        os.remove(temp_path)
+        return True
+    except OSError:
+        return False        # 追記できなければ、作業中のtxtを残す(次の起動で、もう一度まとめる)
+
+
+def fold_leftover_run_logs() -> int:
+    """作業中のまま残っているログ(アプリが途中で終了した等)を、まとめに追記する。追記した件数を返す"""
+    work = os.path.join(get_run_log_dir(), LOG_WORK_DIR_NAME)
+    try:
+        names = sorted(n for n in os.listdir(work) if n.lower().endswith(".txt"))
+    except OSError:
+        return 0
+    return sum(1 for n in names if fold_run_log_file(os.path.join(work, n)))
+
+
+def scan_log_store(path: str) -> List[dict]:
+    """まとめファイルを頭から読んで、1件ごとの{name, offset, length, ...}の一覧にする(本文は読み込まない)"""
+    entries: List[dict] = []
+    cur: Optional[dict] = None
+    try:
+        with io.open(path, "rb") as f:
+            offset = 0
+            mark = LOG_SECTION_MARK.encode("utf-8")
+            rule = _LOG_SECTION_RULE.encode("utf-8")
+            prev_line_start = -1
+            prev_was_rule = False
+            for line in f:
+                size = len(line)
+                if line.startswith(mark) and prev_was_rule:
+                    if cur is not None:
+                        cur["length"] = prev_line_start - cur["offset"]
+                    cur = {"name": line[len(mark):].decode("utf-8", "replace").strip(), "offset": prev_line_start,
+                           "length": 0, "src": "", "program": "", "channel": "", "diag": "", "lines": 0, "kind": "store"}
+                    entries.append(cur)
+                elif cur is not None:
+                    cur["lines"] += 1
+                    if cur["lines"] <= 12 or line.startswith(b"# ====="):
+                        _read_log_meta_line(cur, line)
+                prev_was_rule = line.rstrip(b"\r\n") == rule
+                prev_line_start = offset
+                offset += size
+            if cur is not None:
+                cur["length"] = offset - cur["offset"]
+    except OSError:
+        pass
+    return entries
+
+
+def _read_log_meta_line(entry: dict, raw: bytes) -> None:
+    text = raw.decode("utf-8", "replace").rstrip("\r\n")
+    if text.startswith("# 番組:") and not entry["program"]:
+        m = re.match(r"# 番組:\s*(.*?)\s*/\s*チャンネル:\s*(.*)$", text)
+        if m:
+            entry["program"], entry["channel"] = m.group(1), m.group(2)
+        else:
+            entry["program"] = text[len("# 番組:"):].strip()
+    elif re.match(r"# \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\s+", text) and not entry["src"]:
+        entry["src"] = re.sub(r"^# \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\s+", "", text)
+    elif text.startswith("# ===== 診断結果:"):
+        m = re.match(r"# ===== 診断結果:\s*(\S+)", text)
+        if m:
+            entry["diag"] = m.group(1)
+
+
+def scan_legacy_logs(folder: str) -> List[dict]:
+    """従来の「1件ずつ別のtxt」を、まとめファイルの一覧と同じ形にする"""
+    entries: List[dict] = []
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return entries
+    for n in names:
+        if not n.lower().endswith(".txt") or n.startswith(MERGED_LOG_PREFIX):
+            continue
+        path = os.path.join(folder, n)
+        try:
+            size = os.path.getsize(path)
+            e = {"name": n, "path": path, "offset": 0, "length": size, "src": "", "program": "", "channel": "",
+                 "diag": "", "lines": 0, "kind": "legacy"}
+            with io.open(path, "rb") as f:
+                for i, line in enumerate(f):
+                    e["lines"] = i + 1
+                    if i < 12 or line.startswith(b"# ====="):
+                        _read_log_meta_line(e, line)
+            entries.append(e)
+        except OSError:
+            continue
+    return entries
+
+
+def read_log_entry(entry: dict, store_path: str) -> str:
+    """1件分のログ本文を読む(まとめの見出し3行は含まない)"""
+    try:
+        if entry["kind"] == "legacy":
+            with io.open(entry["path"], "rb") as f:
+                data = f.read()
+        else:
+            with io.open(store_path, "rb") as f:
+                f.seek(entry["offset"])
+                data = f.read(entry["length"])
+            lines = data.split(b"\n")
+            data = b"\n".join(lines[3:])      # 見出し(区切り線・名前・区切り線)を除く
+        return data.decode("utf-8-sig", "replace").replace("\r\n", "\n").rstrip("\n") + "\n"
+    except OSError as e:
+        return f"(読み込めませんでした: {e})\n"
+
+
+def delete_log_entries(entries: List[dict], store_path: str) -> int:
+    """選んだログを削除する(まとめの中の分は、まとめファイルを書き直す)。削除した件数を返す"""
+    removed = 0
+    store_cut = sorted((e["offset"], e["offset"] + e["length"]) for e in entries if e["kind"] == "store")
+    for e in entries:
+        if e["kind"] == "legacy":
+            try:
+                os.remove(e["path"])
+                removed += 1
+            except OSError:
+                pass
+    if store_cut:
+        tmp = store_path + ".tmp"
+        with _LOG_STORE_LOCK:
+            with io.open(store_path, "rb") as src, io.open(tmp, "wb") as dst:
+                pos = 0
+                for a, b in store_cut:
+                    if a > pos:
+                        src.seek(pos)
+                        _copy_range(src, dst, a - pos)
+                    pos = max(pos, b)
+                src.seek(pos)
+                while True:
+                    chunk = src.read(1 << 20)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+            os.replace(tmp, store_path)
+        removed += len(store_cut)
+    return removed
+
+
+def _copy_range(src, dst, n: int) -> None:
+    while n > 0:
+        chunk = src.read(min(1 << 20, n))
+        if not chunk:
+            break
+        dst.write(chunk)
+        n -= len(chunk)
+
+
+def prune_log_store() -> int:
+    """まとめファイルの中の、保存期間(RUN_LOG_KEEP_DAYS日)を過ぎた分と、容量を超えた分(古い順)を削除する"""
+    store = get_log_store_path()
+    if not os.path.isfile(store):
+        return 0
+    entries = scan_log_store(store)
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=RUN_LOG_KEEP_DAYS)
+    doomed = []
+    total = sum(e["length"] for e in entries)
+    for e in entries:      # 古い順に並んでいる(追記しているため)
+        t = log_name_to_time(e["name"])
+        if (t is not None and t < cutoff) or total > RUN_LOG_MAX_BYTES:
+            doomed.append(e)
+            total -= e["length"]
+    return delete_log_entries(doomed, store) if doomed else 0
+
+
+def export_logs_merged(entries: List[dict], store_path: str, dest: str) -> int:
+    """選んだログを、1つのtxtに書き出す(従来の「1つにまとめる」と同じ見出しの形)"""
+    with io.open(dest, "w", encoding="utf-8", newline="\n") as out:
+        for i, e in enumerate(entries, 1):
+            t = log_name_to_time(e["name"])
+            stamp = t.strftime("%Y-%m-%d %H:%M:%S") if t else ""
+            out.write(f"{_LOG_SECTION_RULE}\n### [{i}/{len(entries)}] {e['name']}  (更新: {stamp})\n{_LOG_SECTION_RULE}\n")
+            out.write(read_log_entry(e, store_path).rstrip("\n") + "\n\n")
+    return len(entries)
+
+
+def export_logs_each(entries: List[dict], store_path: str, folder: str) -> Tuple[int, List[str]]:
+    """選んだログを、1件ずつ別のtxtで書き出す。同じ名前があれば番号を付ける"""
+    done = 0
+    errors: List[str] = []
+    for e in entries:
+        base = re.sub(r'[\\/:*?"<>|\r\n]', "_", os.path.splitext(e["name"])[0]) or "log"
+        path = os.path.join(folder, base + ".txt")
+        n = 2
+        while os.path.exists(path):
+            path = os.path.join(folder, f"{base}({n}).txt")
+            n += 1
+        try:
+            with io.open(path, "w", encoding="utf-8", newline="\n") as out:
+                out.write(read_log_entry(e, store_path))
+            done += 1
+        except OSError as ex:
+            errors.append(f"{e['name']}: {ex}")
+    return done, errors
+
+
+def import_legacy_logs(entries: List[dict]) -> int:
+    """従来の1件ずつのtxtを、まとめファイルに追記して、元のtxtを消す。取り込んだ件数を返す"""
+    count = 0
+    for e in sorted((x for x in entries if x["kind"] == "legacy"), key=lambda x: x["name"]):
+        if fold_run_log_file(e["path"]):
+            count += 1
+    return count
+
+
 def open_run_log(m2ts_path: str):
     """エンコード1件分のログファイルを開く(失敗したらNone)。古いログは一定数を超えたら消す"""
     try:
@@ -3091,6 +3353,13 @@ def open_run_log(m2ts_path: str):
         os.makedirs(log_dir, exist_ok=True)
         stem = re.sub(r'[\\/:*?"<>|\r\n]', "_", os.path.splitext(os.path.basename(m2ts_path))[0])[:80]
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        if get_log_mode() == "single":
+            # エンコード中は作業用のtxtに書き、終わったら「まとめ_実行ログ.txt」に追記して消す
+            work = os.path.join(log_dir, LOG_WORK_DIR_NAME)
+            os.makedirs(work, exist_ok=True)
+            handle = io.open(os.path.join(work, f"{stamp}_{stem}.txt"), "w", encoding="utf-8", newline="\n")
+            prune_run_logs(log_dir)      # 従来の1件ずつのtxtが残っていれば、期限切れを整理する
+            return handle
         path = os.path.join(log_dir, f"{stamp}_{stem}.txt")
         handle = io.open(path, "w", encoding="utf-8", newline="\n")
         prune_run_logs(log_dir)
@@ -4206,6 +4475,258 @@ class BackupManagerWindow(tk.Toplevel):
         self.app._restart_app()
 
 
+class LogManagerWindow(tk.Toplevel):
+    """
+    「ログを管理」: 実行ログ(まとめ_実行ログ.txt の中と、従来の1件ずつのtxt)を一覧にして、選んだものを
+    「1つのtxtにまとめて」または「1件ずつ」書き出す・内容を見る・削除する。
+    """
+
+    COLS = (("time", "日時", 140), ("src", "元ファイル", 200), ("program", "番組名", 260), ("channel", "放送局", 110),
+            ("diag", "診断", 60), ("kind", "保存場所", 90), ("size", "サイズ", 80))
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        self.title("ログを管理")
+        self.geometry("1180x600")
+        self.minsize(760, 380)
+        self.entries: List[dict] = []
+        self.rows: Dict[str, dict] = {}
+        self.sort_state: Tuple[str, bool] = ("time", False)
+        self.filter_var = tk.StringVar()
+        self.only_check_var = tk.BooleanVar(value=False)
+        self.info_var = tk.StringVar()
+        self.q: "queue.Queue" = queue.Queue()
+        self._gen = 0
+
+        top = ttk.Frame(self, padding=(8, 6))
+        top.pack(fill=tk.X)
+        ttk.Label(top, text="絞り込み:").pack(side=tk.LEFT)
+        ttk.Entry(top, textvariable=self.filter_var, width=34).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(top, text="クリア", command=lambda: self.filter_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Checkbutton(top, text="診断が「要確認」のものだけ", variable=self.only_check_var,
+                        command=self._render).pack(side=tk.LEFT, padx=(14, 0))
+        ttk.Button(top, text="ログを読み直す", command=self.reload).pack(side=tk.RIGHT)
+        self.filter_var.trace_add("write", lambda *_: self._render())
+
+        mid = ttk.Frame(self)
+        mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.tree = ttk.Treeview(mid, columns=[c for c, _l, _w in self.COLS], show="headings", selectmode="extended")
+        self._labels = {}
+        for c, label, w in self.COLS:
+            self._labels[c] = label
+            self.tree.heading(c, text=label, command=lambda col=c: self._sort_by(col))
+            self.tree.column(c, width=w, anchor="e" if c == "size" else "w")
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.tag_configure("check", background="#fff2cc", foreground="#7f6000")
+        self.range_select = RangeSelect(self.tree)
+        self.tree.bind("<Double-1>", lambda e: self._view())
+        self.tree.bind("<Control-a>", lambda e: (self.tree.selection_set(self.tree.get_children()), "break")[1])
+
+        ops = ttk.Frame(self, padding=(8, 6, 8, 0))
+        ops.pack(fill=tk.X)
+        ttk.Label(ops, text="選んだログを:").pack(side=tk.LEFT)
+        ttk.Button(ops, text="1つのtxtに書き出す...", command=self._export_merged).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="1件ずつ書き出す...", command=self._export_each).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="内容を見る", command=self._view).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="削除", command=self._delete).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="全選択", command=lambda: self.tree.selection_set(self.tree.get_children())).pack(side=tk.LEFT, padx=(14, 0))
+        self.import_btn = ttk.Button(ops, text="従来の1件ずつのtxtを、まとめに取り込む", command=self._import_legacy)
+        self.import_btn.pack(side=tk.RIGHT)
+
+        ttk.Label(self, textvariable=self.info_var).pack(fill=tk.X, padx=10, pady=(6, 8))
+        attach_tooltips(self)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.after(200, self._poll)
+        self.reload()
+
+    def _close(self):
+        self._gen += 1
+        self.destroy()
+
+    # ---- 読み込み ----
+    def reload(self):
+        self._gen += 1
+        gen = self._gen
+        self.info_var.set("ログを読み込んでいます…")
+        threading.Thread(target=self._load, args=(gen,), daemon=True).start()
+
+    def _load(self, gen: int):
+        folder = get_run_log_dir()
+        with _LOG_STORE_LOCK:
+            store_entries = scan_log_store(get_log_store_path()) if os.path.isfile(get_log_store_path()) else []
+        entries = store_entries + scan_legacy_logs(folder)
+        self.q.put((gen, entries))
+
+    def _poll(self):
+        try:
+            while True:
+                gen, entries = self.q.get_nowait()
+                if gen == self._gen:
+                    self.entries = entries
+                    self._render()
+        except queue.Empty:
+            pass
+        try:
+            self.after(250, self._poll)
+        except tk.TclError:
+            pass
+
+    # ---- 表示 ----
+    def _time_text(self, e: dict) -> str:
+        t = log_name_to_time(e["name"])
+        return t.strftime("%Y/%m/%d %H:%M:%S") if t else ""
+
+    def _matches(self, e: dict) -> bool:
+        if self.only_check_var.get() and e["diag"] != "要確認":
+            return False
+        terms = self.app._norm_search(self.filter_var.get()).split()
+        if not terms:
+            return True
+        hay = self.app._norm_search(" ".join((e["program"], e["src"], e["channel"], e["name"], e["diag"])))
+        return all(t in hay for t in terms)
+
+    def _sort_by(self, col: str):
+        asc = not (self.sort_state[0] == col and self.sort_state[1])
+        self.sort_state = (col, asc)
+        self._render()
+
+    def _entry_key(self, e: dict) -> str:
+        return e["kind"] + "|" + e["name"] + "|" + str(e["offset"])
+
+    def _render(self):
+        selected = {self._entry_key(self.rows[i]) for i in self.tree.selection() if i in self.rows}
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        self.rows = {}
+        norm = self.app._norm_search
+        keyfn = {
+            "time": lambda e: e["name"], "src": lambda e: norm(os.path.basename(e["src"].replace("\\", "/"))),
+            "program": lambda e: norm(e["program"]), "channel": lambda e: norm(e["channel"]),
+            "diag": lambda e: e["diag"], "kind": lambda e: e["kind"], "size": lambda e: e["length"],
+        }[self.sort_state[0]]
+        shown = sorted((e for e in self.entries if self._matches(e)), key=keyfn, reverse=not self.sort_state[1])
+        reselect = []
+        for e in shown:
+            src = os.path.basename(e["src"].replace("\\", "/")) if e["src"] else ""
+            iid = self.tree.insert("", "end", tags=("check",) if e["diag"] == "要確認" else (), values=(
+                self._time_text(e), src, e["program"], e["channel"], e["diag"] or "-",
+                "まとめ" if e["kind"] == "store" else "個別txt", f"{e['length'] / 1024:,.0f} KB"))
+            self.rows[iid] = e
+            if self._entry_key(e) in selected:
+                reselect.append(iid)
+        if reselect:
+            self.tree.selection_set(reselect)
+        for c, label in self._labels.items():
+            self.tree.heading(c, text=label + ((" ▲" if self.sort_state[1] else " ▼") if c == self.sort_state[0] else ""))
+        legacy = sum(1 for e in self.entries if e["kind"] == "legacy")
+        total = sum(e["length"] for e in self.entries)
+        self.import_btn.config(state=tk.NORMAL if legacy else tk.DISABLED)
+        mode = "1つのtxtにまとめて保存" if get_log_mode() == "single" else "1件ずつ別のtxtで保存"
+        self.info_var.set(f"{len(shown)} / {len(self.entries)}件を表示 / 合計 {total / 1024 / 1024:.1f} MB / "
+                          f"従来の個別txt {legacy}件 / 今の保存方法: {mode}   ※ 黄色は診断が「要確認」")
+
+    # ---- 操作 ----
+    def _selected(self) -> List[dict]:
+        sel = [self.rows[i] for i in self.tree.selection() if i in self.rows]
+        sel.sort(key=lambda e: e["name"])
+        return sel
+
+    def _need(self) -> List[dict]:
+        sel = self._selected()
+        if not sel:
+            messagebox.showinfo("情報", "ログを選んでください。", parent=self)
+        return sel
+
+    def _export_merged(self):
+        sel = self._need()
+        if not sel:
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self, title=f"選んだログ{len(sel)}件を1つのtxtに書き出す", defaultextension=".txt",
+            initialfile=f"{MERGED_LOG_PREFIX}{datetime.datetime.now():%Y%m%d-%H%M%S}.txt",
+            filetypes=[("テキスト", "*.txt")])
+        if not path:
+            return
+        try:
+            export_logs_merged(sel, get_log_store_path(), path)
+        except OSError as e:
+            messagebox.showerror("エラー", f"書き出せませんでした: {e}", parent=self)
+            return
+        messagebox.showinfo("書き出し", f"{len(sel)}件を1つのtxtに書き出しました。\n{path}", parent=self)
+
+    def _export_each(self):
+        sel = self._need()
+        if not sel:
+            return
+        folder = filedialog.askdirectory(parent=self, title=f"選んだログ{len(sel)}件を1件ずつ書き出すフォルダ")
+        if not folder:
+            return
+        done, errors = export_logs_each(sel, get_log_store_path(), folder)
+        msg = f"{done}件を、1件ずつ書き出しました。\n{folder}"
+        if errors:
+            msg += "\n\n書き出せなかったもの:\n" + "\n".join(errors[:10])
+        messagebox.showinfo("書き出し", msg, parent=self)
+
+    def _view(self):
+        sel = self._selected()
+        if len(sel) != 1:
+            messagebox.showinfo("情報", "内容を見るログを1件だけ選んでください。", parent=self)
+            return
+        e = sel[0]
+        win = tk.Toplevel(self)
+        win.title(f"ログ: {e['name']}")
+        win.geometry("980x640")
+        box = scrolledtext.ScrolledText(win, wrap=tk.NONE, font=("Consolas", 9))
+        box.pack(fill=tk.BOTH, expand=True)
+        text = read_log_entry(e, get_log_store_path())
+        box.insert("1.0", text)
+        box.configure(state=tk.DISABLED)
+
+    def _busy_encoding(self) -> bool:
+        if self.app.encoding_running:
+            messagebox.showinfo("情報", "エンコード中は、ログの削除・取り込みはできません。終わってからやり直してください。", parent=self)
+            return True
+        return False
+
+    def _delete(self):
+        sel = self._need()
+        if not sel or self._busy_encoding():
+            return
+        total = sum(e["length"] for e in sel)
+        if not messagebox.askyesno(
+                "削除の確認",
+                f"選んだログ {len(sel)}件({total / 1024 / 1024:.1f} MB)を削除します。\n元には戻せません。"
+                "\n(必要なら先に書き出してください)", icon="warning", default="no", parent=self):
+            return
+        try:
+            n = delete_log_entries(sel, get_log_store_path())
+        except OSError as ex:
+            messagebox.showerror("エラー", f"削除できませんでした: {ex}", parent=self)
+            self.reload()
+            return
+        messagebox.showinfo("削除", f"{n}件を削除しました。", parent=self)
+        self.reload()
+
+    def _import_legacy(self):
+        if self._busy_encoding():
+            return
+        legacy = [e for e in self.entries if e["kind"] == "legacy"]
+        if not legacy:
+            return
+        if not messagebox.askyesno(
+                "取り込み",
+                f"従来の1件ずつのtxt {len(legacy)}件を、「{LOG_STORE_NAME}」に追記して、元のtxtを削除します。\n"
+                "(中身は変わりません。あとから、ここで選んで書き出せます)", parent=self):
+            return
+        n = import_legacy_logs(legacy)
+        messagebox.showinfo("取り込み", f"{n}件を取り込みました。", parent=self)
+        self.reload()
+
+
 class SeriesSortWindow(tk.Toplevel):
     """
     「作品ごとに仕分け」: 仕分け済みの放送局フォルダ(仕分け/放送局名/)の中で、作品名のフォルダに振り分ける。
@@ -4566,6 +5087,8 @@ class App(tk.Tk):
 
         self._build_ui()
         self._setup_tooltips()
+        # 前回、途中で終わったログを、まとめに追記する。保存期間を過ぎた分の整理も(裏で)する
+        threading.Thread(target=lambda: (fold_leftover_run_logs(), prune_log_store()), daemon=True).start()
         if self.settings.get("auto_update_check", "1") != "0":
             self.after(4000, lambda: self.check_for_update(manual=False))
         self._refresh_bat_combo()
@@ -4814,6 +5337,12 @@ class App(tk.Tk):
         log_menu = tk.Menu(menubar, tearoff=0)
         log_menu.add_command(label="ログを保存...", command=self._save_log_as)
         log_menu.add_command(label="ログフォルダを開く", command=self._open_log_folder)
+        log_menu.add_command(label="ログを管理(選んで書き出す・削除)...", command=self._open_log_manager)
+        self.log_mode_var = tk.StringVar(value=get_log_mode())
+        log_menu.add_radiobutton(label="保存方法: 1つのtxtにまとめて保存(おすすめ)", variable=self.log_mode_var,
+                                 value="single", command=self._on_log_mode_changed)
+        log_menu.add_radiobutton(label="保存方法: 1件ずつ別のtxtで保存(従来)", variable=self.log_mode_var,
+                                 value="each", command=self._on_log_mode_changed)
         log_menu.add_command(label="ログフォルダのtxtを1つにまとめる...", command=self._merge_log_files)
         log_menu.add_separator()
         log_menu.add_command(label="ログ(txt)を全削除...", command=self._delete_all_logs)
@@ -6967,6 +7496,21 @@ class App(tk.Tk):
             f"{len(files)}件を1つにまとめました({total / 1024 / 1024:.1f}MB)。\n{path}\n"
             "元のログは消していません。", parent=self)
 
+    def _on_log_mode_changed(self):
+        self.settings["log_mode"] = self.log_mode_var.get()
+        save_settings(self.settings)
+
+    def _open_log_manager(self):
+        win = getattr(self, "_log_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        self._log_win = LogManagerWindow(self)
+
     def _open_log_folder(self):
         folder = get_run_log_dir()
         try:
@@ -7253,6 +7797,8 @@ class App(tk.Tk):
                     handle.close()
                 except Exception:
                     pass
+                if os.path.basename(os.path.dirname(handle.name)) == LOG_WORK_DIR_NAME:
+                    fold_run_log_file(handle.name)    # まとめ_実行ログ.txt に追記して、作業用のtxtを消す
 
     def _remove_stale_outputs(self, m2ts_path: str, reason: str, keep_main: bool = False) -> None:
         """途中で止まった出力(<m2ts>.mkv/.mp4 など)を消す。
