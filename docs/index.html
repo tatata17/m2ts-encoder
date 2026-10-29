@@ -318,6 +318,10 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">9</span>更新履歴</h2>
   <p>新しい順です。</p>
+  <h3>2026.10.29.4 <small style="color:var(--muted);font-weight:400">(2026-10-29)</small></h3>
+  <ul class="tight">
+    <li>アップデートが、公開した直後に「ダウンロードしたファイルの版番号が version.json と一致しません」と失敗することがある問題を修正。最新のコミットを調べて、同じコミットから version.json と本体を取るようにしました(調べられないときは、これまでどおりmainから取ります)。</li>
+  </ul>
   <h3>2026.10.29.3 <small style="color:var(--muted);font-weight:400">(2026-10-29)</small></h3>
   <ul class="tight">
     <li>あとから元のm2tsの音声・字幕を合体するとき、途中から始まるもの(本編に入ってから現れる英語音声など)が、番組の頭に詰められてしまう問題を修正。元の位置のまま合体します。</li>

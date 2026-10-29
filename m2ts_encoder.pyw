@@ -2858,7 +2858,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.3"
+APP_VERSION = "2026.10.29.4"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -2878,12 +2878,32 @@ def _http_get(url: str, timeout: float = 15.0) -> bytes:
         return resp.read()
 
 
+UPDATE_COMMIT_API = "https://api.github.com/repos/tatata17/m2ts-encoder/commits/main"
+
+
+def resolve_update_base() -> str:
+    """
+    取得元のURLの先頭を決める。mainの最新コミットのIDを調べて、そのコミットに固定したURLにする。
+    mainのままだと、公開した直後はGitHubの配信側のキャッシュで version.json と本体の版が食い違うことがある
+    (同じコミットなら、2つのファイルは必ず同じ版になる)。調べられなければ、これまでどおりmainを使う。
+    """
+    try:
+        sha = str(json.loads(_http_get(UPDATE_COMMIT_API, timeout=8.0).decode("utf-8")).get("sha", ""))
+        if re.fullmatch(r"[0-9a-f]{40}", sha):
+            return UPDATE_BASE_URL.replace("/main/", f"/{sha}/")
+    except Exception:
+        pass
+    return UPDATE_BASE_URL
+
+
 def fetch_update_info() -> Dict[str, object]:
     """GitHub上の version.json を取得する。失敗したら例外"""
-    raw = _http_get(UPDATE_BASE_URL + UPDATE_INFO_FILE + f"?t={int(datetime.datetime.now().timestamp())}")
+    base = resolve_update_base()
+    raw = _http_get(base + UPDATE_INFO_FILE + f"?t={int(datetime.datetime.now().timestamp())}")
     info = json.loads(raw.decode("utf-8"))
     if not isinstance(info, dict) or not parse_version(info.get("version", "")) or not info.get("file"):
         raise ValueError("version.json の形式が正しくありません")
+    info["_base"] = base  # 本体も同じコミットから取る
     return info
 
 
@@ -2894,7 +2914,8 @@ def is_newer_version(remote: str, local: Optional[str] = None) -> bool:
 
 def download_update_source(info: Dict[str, object]) -> bytes:
     """新しい版のファイルを取得し、壊れていないか確認してから返す(確認に通らなければ例外)"""
-    raw = _http_get(UPDATE_BASE_URL + str(info["file"]) + f"?t={int(datetime.datetime.now().timestamp())}", timeout=60.0)
+    base = str(info.get("_base") or UPDATE_BASE_URL)
+    raw = _http_get(base + str(info["file"]) + f"?t={int(datetime.datetime.now().timestamp())}", timeout=60.0)
     text = raw.decode("utf-8")
     if len(raw) < 100_000:
         raise ValueError("ダウンロードしたファイルが小さすぎます(壊れている可能性があります)")
