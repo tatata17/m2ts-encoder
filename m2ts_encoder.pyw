@@ -1405,8 +1405,14 @@ def _fmt_hms(seconds: float) -> str:
     return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
 
 
+def has_bilingual_tag(program_name: str) -> bool:
+    """番組名に二か国語放送のマーク([二])が付いているか(全角/半角のかっこの違いは吸収する)"""
+    text = unicodedata.normalize("NFKC", program_name or "")
+    return bool(re.search(r"[\[【<＜(]\s*二(?:か国語|ヶ国語|カ国語)?\s*[\]】>＞)]", text))
+
+
 def resolve_auto_options(
-    options: Dict[str, object], streams: List[dict], channel_name: str = ""
+    options: Dict[str, object], streams: List[dict], channel_name: str = "", program_name: str = ""
 ) -> Tuple[Dict[str, object], List[str]]:
     """
     ffprobeの結果をもとに、字幕・音声の設定を実際の中身に合わせる。
@@ -1543,7 +1549,11 @@ def resolve_auto_options(
         # (例: 1920x540, 59.94fps, SAR 1:1)。本物の720p60などを取り違えないよう、高さも見る
         half_height = not isinstance(height, int) or height <= 576
         progressive_60 = fps >= 50.0 and not interlaced and half_height
-        is_mono = len(audio) == 1 and is_mono_bilingual_channel(channel_name)
+        # 音声が1本だけなのに二か国語のとき(カートゥーン系の放送局、または番組名に[二]がある録画)は、
+        # 1本の中に日本語(左)と原語(右)が入った「モノラル二か国語」とみなして主/副に分離する
+        mono_by_channel = is_mono_bilingual_channel(channel_name)
+        mono_by_tag = has_bilingual_tag(program_name)
+        is_mono = len(audio) == 1 and (mono_by_channel or mono_by_tag)
         notes.append(f"放送局: 「{channel_name or '(取得できていません)'}」")
 
         o["audio"] = "mono" if is_mono else "copy"
@@ -1553,8 +1563,8 @@ def resolve_auto_options(
         # 720x480などのSD(4:3の放送が多い)に強制すると、横に伸びてしまうので、元の縦横比のままにする
         o["aspect"] = bool(progressive_60 or not half_height)
         if is_mono:
-            o["container"] = "mp4"  # モノラル二か国語の分離は、字幕を扱わないmp4で行う
-            o["subs"] = False
+            # 字幕が無ければmp4。中身のある字幕があればmkvにして字幕も残す
+            o["container"] = "mkv" if o["subs"] else "mp4"
         else:
             # AAC以外(mp2など)の音声はmp4だと互換性が低いので、mkvにする
             o["container"] = "mkv" if (o["subs"] or non_aac) else "mp4"
@@ -1566,7 +1576,8 @@ def resolve_auto_options(
                else "インターレース扱い(bwdif)")
         )
         if is_mono:
-            notes.append(f"音声1本・放送局「{channel_name}」→ モノラル二か国語として主/副に分離")
+            why = f"放送局「{channel_name}」" if mono_by_channel else "番組名に[二]あり"
+            notes.append(f"音声1本・{why} → モノラル二か国語として主/副に分離")
         notes.append(f"→ 出力は {str(o['container']).upper()}")
     if o["subs"] and o["container"] == "mkv" and o.get("sub_postmux"):
         if sub_early_note:
@@ -2308,6 +2319,9 @@ def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str =
     if o["audio"] == "mono":
         parts += ["-filter_complex", "channelsplit[FL][FR]",
                   "-map", "0:v", "-map", "[FL]", "-map", "[FR]", "-map", "0:a"]
+        if inline_subs and o.get("sub_ordinals"):
+            for k in o["sub_ordinals"]:
+                parts += ["-map", f"0:s:{k}"]
     elif "audio_ordinals" in o or "sub_ordinals" in o:
         # ffprobeの判定結果にもとづき、中身のあるトラックだけを明示的に選ぶ
         parts += ["-map", "0:v"]
@@ -2805,7 +2819,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.28.2"
+APP_VERSION = "2026.10.29.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6599,7 +6613,8 @@ class App(tk.Tk):
                     self.encode_queue.put(("log", f"[自動判定] 失敗({error})。設定どおりに実行します"))
                 else:
                     options, notes = resolve_auto_options(
-                        options, streams, self.row_data.get(iid, {}).get("channel", "") or ""
+                        options, streams, self.row_data.get(iid, {}).get("channel", "") or "",
+                        self.row_data.get(iid, {}).get("program_name", "") or "",
                     )
                     for note in notes:
                         self.encode_queue.put(("log", f"[自動判定] {note}"))
