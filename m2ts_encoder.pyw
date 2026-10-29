@@ -1295,6 +1295,10 @@ _TS_WRAP_SECONDS = 2 ** 33 / 90000.0
 # このようなストリームをエンコードと同時にコピーすると、mkv/mp4の書き込みが
 # そのストリームの続きを待ち続けて映像が溜まり、最後にメモリ不足で失敗する。
 STREAM_EARLY_END_SECONDS = 60.0
+# 録画の途中(本編の開始など)から現れるストリーム(二か国語の2本目の音声など)を見つけるため、
+# ffmpeg/ffprobeに先頭のこれだけ(データ量・時間)を調べさせる。標準の設定だと、先頭の数秒でストリームを
+# 確定してしまうため、本編に入ってから始まる音声が「無い」ものとして扱われる。
+WIDE_PROBE_ARGS = ["-probesize", "500M", "-analyzeduration", "500M"]
 # 字幕のパケットの間がこれ以上空く(まばらな字幕)と、同時に入れた時にエンコードが止まる
 SUBTITLE_SPARSE_GAP_SECONDS = 300.0
 
@@ -1348,8 +1352,8 @@ def probe_stream_times(path: str, timeout: float = 1800.0) -> Dict[int, Tuple[fl
     ffprobe = find_ffprobe()
     if not ffprobe:
         return {}
-    cmd = [ffprobe, "-v", "error", "-show_entries", "packet=stream_index,pts_time,dts_time",
-           "-of", "compact=p=0", path]
+    cmd = [ffprobe, "-v", "error"] + WIDE_PROBE_ARGS + [
+           "-show_entries", "packet=stream_index,pts_time,dts_time", "-of", "compact=p=0", path]
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
         completed = subprocess.run(
@@ -1366,7 +1370,7 @@ def probe_streams(path: str, timeout: float = 1800.0) -> Tuple[Optional[List[dic
     ffprobe = find_ffprobe()
     if not ffprobe:
         return None, "ffprobe が見つかりません"
-    cmd = [ffprobe, "-v", "error", "-count_packets", "-show_entries",
+    cmd = [ffprobe, "-v", "error"] + WIDE_PROBE_ARGS + ["-count_packets", "-show_entries",
            "stream=index,codec_type,codec_name,nb_read_packets,field_order,avg_frame_rate,"
            "width,height,channels,sample_rate", "-of", "json", path]
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -1405,14 +1409,8 @@ def _fmt_hms(seconds: float) -> str:
     return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
 
 
-def has_bilingual_tag(program_name: str) -> bool:
-    """番組名に二か国語放送のマーク([二])が付いているか(全角/半角のかっこの違いは吸収する)"""
-    text = unicodedata.normalize("NFKC", program_name or "")
-    return bool(re.search(r"[\[【<＜(]\s*二(?:か国語|ヶ国語|カ国語)?\s*[\]】>＞)]", text))
-
-
 def resolve_auto_options(
-    options: Dict[str, object], streams: List[dict], channel_name: str = "", program_name: str = ""
+    options: Dict[str, object], streams: List[dict], channel_name: str = ""
 ) -> Tuple[Dict[str, object], List[str]]:
     """
     ffprobeの結果をもとに、字幕・音声の設定を実際の中身に合わせる。
@@ -1421,6 +1419,7 @@ def resolve_auto_options(
     戻り値: (設定, 判定結果のメモ)
     """
     o = normalize_encode_options(options)
+    o["wide_probe"] = True  # 途中から現れるストリームも見つけるため、広めに調べる
     notes: List[str] = []
     audio = [st for st in streams if st["type"] == "audio"]
     subs = [st for st in streams if st["type"] == "subtitle"]
@@ -1465,9 +1464,24 @@ def resolve_auto_options(
     # CMなどで無音になる「解説放送」とみなす(二か国語放送は2本の数がほぼ揃う)
     if len(audio) >= 2 and 0 in live_audio and 1 in live_audio:
         both_used = "audio_ordinals" not in o or {0, 1} <= set(o["audio_ordinals"])
-        if both_used and audio[1]["packets"] < audio[0]["packets"] * AUDIO_DESC_RATIO:
+        def _rate(st: dict) -> float:
+            """1秒あたりのパケット数。途中から始まる音声は、始まってからの長さで割る"""
+            first, last = st.get("first_time"), st.get("last_time")
+            if first is not None and last is not None and last - first > 1.0:
+                return st["packets"] / (last - first)
+            return float(st["packets"])
+
+        late_second = (
+            audio[1].get("first_time") is not None and audio[0].get("first_time") is not None
+            and audio[1]["first_time"] - audio[0]["first_time"] > STREAM_EARLY_END_SECONDS
+        )
+        if late_second and _rate(audio[0]) > 0:
+            ratio_value = _rate(audio[1]) / _rate(audio[0])
+        else:
+            ratio_value = audio[1]["packets"] / audio[0]["packets"] if audio[0]["packets"] else 1.0
+        if both_used and ratio_value < AUDIO_DESC_RATIO:
             o["audio_desc"] = True
-            ratio = audio[1]["packets"] * 100 // audio[0]["packets"]
+            ratio = int(ratio_value * 100)
             notes.append(f"→ 2本目の音声は1本目の{ratio}%のため、解説放送とみなします(language=jpn, title=解説放送)")
 
     # 映像より早く途切れる音声(2番組が地続きの録画で、後半に解説放送が無い等)は、
@@ -1482,6 +1496,14 @@ def resolve_auto_options(
         gap = video_end - end
         return gap if gap > STREAM_EARLY_END_SECONDS else None
 
+
+    video_first = video_st.get("first_time") if video_st else None
+    if video_first is not None:
+        for k in live_audio:
+            first = audio[k].get("first_time")
+            if first is not None and first - video_first > STREAM_EARLY_END_SECONDS:
+                notes.append(f"音声 a:{k} は {_fmt_hms(first - video_first)} から始まります(本編に入ってから現れる二か国語の音声など)")
+
     if video_end is not None and live_audio:
         selected = list(o.get("audio_ordinals", live_audio))
         post: List[int] = []
@@ -1492,6 +1514,7 @@ def resolve_auto_options(
                 notes.append(
                     f"音声 a:{k} は {_fmt_hms(audio[k]['last_time'])} で途切れます(映像は {_fmt_hms(video_end)} まで)"
                 )
+
         if post:
             o["audio_ordinals"] = [k for k in selected if k not in post]
             o["audio_post_ordinals"] = post
@@ -1549,11 +1572,7 @@ def resolve_auto_options(
         # (例: 1920x540, 59.94fps, SAR 1:1)。本物の720p60などを取り違えないよう、高さも見る
         half_height = not isinstance(height, int) or height <= 576
         progressive_60 = fps >= 50.0 and not interlaced and half_height
-        # 音声が1本だけなのに二か国語のとき(カートゥーン系の放送局、または番組名に[二]がある録画)は、
-        # 1本の中に日本語(左)と原語(右)が入った「モノラル二か国語」とみなして主/副に分離する
-        mono_by_channel = is_mono_bilingual_channel(channel_name)
-        mono_by_tag = has_bilingual_tag(program_name)
-        is_mono = len(audio) == 1 and (mono_by_channel or mono_by_tag)
+        is_mono = len(audio) == 1 and is_mono_bilingual_channel(channel_name)
         notes.append(f"放送局: 「{channel_name or '(取得できていません)'}」")
 
         o["audio"] = "mono" if is_mono else "copy"
@@ -1563,8 +1582,8 @@ def resolve_auto_options(
         # 720x480などのSD(4:3の放送が多い)に強制すると、横に伸びてしまうので、元の縦横比のままにする
         o["aspect"] = bool(progressive_60 or not half_height)
         if is_mono:
-            # 字幕が無ければmp4。中身のある字幕があればmkvにして字幕も残す
-            o["container"] = "mkv" if o["subs"] else "mp4"
+            o["container"] = "mp4"  # モノラル二か国語の分離は、字幕を扱わないmp4で行う
+            o["subs"] = False
         else:
             # AAC以外(mp2など)の音声はmp4だと互換性が低いので、mkvにする
             o["container"] = "mkv" if (o["subs"] or non_aac) else "mp4"
@@ -1576,8 +1595,7 @@ def resolve_auto_options(
                else "インターレース扱い(bwdif)")
         )
         if is_mono:
-            why = f"放送局「{channel_name}」" if mono_by_channel else "番組名に[二]あり"
-            notes.append(f"音声1本・{why} → モノラル二か国語として主/副に分離")
+            notes.append(f"音声1本・放送局「{channel_name}」→ モノラル二か国語として主/副に分離")
         notes.append(f"→ 出力は {str(o['container']).upper()}")
     if o["subs"] and o["container"] == "mkv" and o.get("sub_postmux"):
         if sub_early_note:
@@ -2265,6 +2283,8 @@ def normalize_encode_options(options: Optional[Dict[str, object]]) -> Dict[str, 
     for key in ("audio_ordinals", "sub_ordinals", "audio_post_ordinals", "audio_non_aac"):
         if options and isinstance(options.get(key), list):
             merged[key] = list(options[key])
+    if options and options.get("wide_probe"):
+        merged["wide_probe"] = True
     if options and options.get("audio_desc"):
         merged["audio_desc"] = True  # 2本目が解説放送とみなされた(ffprobe判定の結果)
     if merged["container"] not in ("mkv", "mp4"):
@@ -2314,14 +2334,13 @@ def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str =
         parts += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
     if o["catv"]:
         parts += ["-scan_all_pmts", "1", "-probesize", "500M", "-analyzeduration", "500M"]
+    elif o.get("wide_probe"):
+        parts += WIDE_PROBE_ARGS
     parts += ["-i", input_expr, "-fflags", "+discardcorrupt"]
 
     if o["audio"] == "mono":
         parts += ["-filter_complex", "channelsplit[FL][FR]",
                   "-map", "0:v", "-map", "[FL]", "-map", "[FR]", "-map", "0:a"]
-        if inline_subs and o.get("sub_ordinals"):
-            for k in o["sub_ordinals"]:
-                parts += ["-map", f"0:s:{k}"]
     elif "audio_ordinals" in o or "sub_ordinals" in o:
         # ffprobeの判定結果にもとづき、中身のあるトラックだけを明示的に選ぶ
         parts += ["-map", "0:v"]
@@ -2428,6 +2447,8 @@ def build_postmux_command(options: Optional[Dict[str, object]]) -> Optional[str]
     if o["catv"]:
         # 読み込み設定は、直後の入力(元のm2ts)にだけ効く
         parts += ["-scan_all_pmts", "1", "-probesize", "500M", "-analyzeduration", "500M"]
+    elif o.get("wide_probe"):
+        parts += WIDE_PROBE_ARGS
     parts += ["-i", '"%1"', "-map", "0"]
     for k in audio:
         parts += ["-map", f"1:a:{k}"]
@@ -2819,7 +2840,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.1"
+APP_VERSION = "2026.10.29.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6613,8 +6634,7 @@ class App(tk.Tk):
                     self.encode_queue.put(("log", f"[自動判定] 失敗({error})。設定どおりに実行します"))
                 else:
                     options, notes = resolve_auto_options(
-                        options, streams, self.row_data.get(iid, {}).get("channel", "") or "",
-                        self.row_data.get(iid, {}).get("program_name", "") or "",
+                        options, streams, self.row_data.get(iid, {}).get("channel", "") or ""
                     )
                     for note in notes:
                         self.encode_queue.put(("log", f"[自動判定] {note}"))
