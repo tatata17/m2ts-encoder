@@ -2753,26 +2753,33 @@ MENU_TIPS = {
 
 
 class MenuTipper:
-    """メニュー項目にマウスを乗せる(またはキーで選ぶ)と、説明を小さく表示する。Tkのメニューには標準の機能が無いため、<<MenuSelect>>を使う"""
+    """
+    メニュー項目にマウスを乗せる(またはキーで選ぶ)と、説明を表示する。Tkのメニューには標準の機能が無いため、
+    項目が選ばれた時の通知 <<MenuSelect>> を使う。説明は、画面下の状態表示と、小さな吹き出しの両方に出す。
+    """
 
-    def __init__(self):
+    def __init__(self, app: "tk.Tk"):
+        self.app = app
         self._tip: Optional[tk.Toplevel] = None
+        self._saved_status: Optional[str] = None
+        self._hide_job = None
+        self._debug_left = 3          # 動作確認用: 最初の数回だけ、通知を受け取ったことをログに残す
 
-    def attach(self, menu: "tk.Menu"):
-        menu.bind("<<MenuSelect>>", lambda e, m=menu: self._on_select(m), add="+")
-        menu.bind("<Unmap>", lambda e: self.hide(), add="+")
+    def install(self):
+        self.app.bind_class("Menu", "<<MenuSelect>>", self._on_event, add="+")
 
-    def _label_of(self, menu: "tk.Menu") -> Optional[str]:
+    def _on_event(self, event):
+        menu = event.widget
         try:
             idx = menu.index("active")
-            if idx is None or idx == "none":
-                return None
-            return menu.entrycget(idx, "label")
         except tk.TclError:
-            return None
-
-    def _on_select(self, menu: "tk.Menu"):
-        label = self._label_of(menu)
+            idx = None
+        label = None
+        if idx is not None and idx != "none":
+            try:
+                label = menu.entrycget(idx, "label")
+            except tk.TclError:
+                label = None
         text = None
         if label:
             text = MENU_TIPS.get(label)
@@ -2781,28 +2788,51 @@ class MenuTipper:
                     if len(key) >= 4 and label.startswith(key):
                         text = t
                         break
+        if self._debug_left > 0 and label:
+            self._debug_left -= 1
+            try:
+                self.app._append_log(f"[メニュー説明] 通知を受け取りました: {label[:30]} → {'説明あり' if text else '説明なし'}")
+            except Exception:
+                pass
         if not text:
+            self._restore_status()
             self.hide()
             return
+        if self._saved_status is None:
+            self._saved_status = self.app.status_var.get()
+        self.app.status_var.set(text)
         try:
-            idx = menu.index("active")
             x = menu.winfo_rootx() + menu.winfo_width() + 2
-            y = menu.winfo_rooty() + menu.yposition(idx)
+            y = menu.winfo_rooty() + (menu.yposition(idx) if idx is not None else 0)
+            self.show(menu, text, x, y)
         except tk.TclError:
             self.hide()
-            return
-        self.show(menu, text, x, y)
+        if self._hide_job is not None:
+            try:
+                self.app.after_cancel(self._hide_job)
+            except tk.TclError:
+                pass
+        self._hide_job = self.app.after(6000, self._timeout)
+
+    def _timeout(self):
+        self._hide_job = None
+        self._restore_status()
+        self.hide()
+
+    def _restore_status(self):
+        if self._saved_status is not None:
+            self.app.status_var.set(self._saved_status)
+            self._saved_status = None
 
     def show(self, menu: "tk.Menu", text: str, x: int, y: int):
         self.hide()
         try:
-            tip = tk.Toplevel(menu)
+            tip = tk.Toplevel(self.app)
             tip.wm_overrideredirect(True)
-            for attr in ("-topmost", "-disabled"):
-                try:
-                    tip.wm_attributes(attr, True)    # -disabled: マウスやキー入力を受けない(メニューの操作を邪魔しない)
-                except tk.TclError:
-                    pass
+            try:
+                tip.wm_attributes("-topmost", True)
+            except tk.TclError:
+                pass
             tk.Label(tip, text=text, justify=tk.LEFT, wraplength=360, background="#ffffe1", foreground="#000000",
                      relief=tk.SOLID, borderwidth=1, padx=6, pady=4).pack()
             tip.update_idletasks()
@@ -3000,7 +3030,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.9"
+APP_VERSION = "2026.10.30.10"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5466,9 +5496,8 @@ class App(tk.Tk):
         self._help_menu = help_menu
 
         # メニュー項目にも、ツールチップ(説明)を出す
-        self._menu_tipper = MenuTipper()
-        for m in (menubar, file_menu, tool_menu, settings_menu, log_menu, help_menu):
-            self._menu_tipper.attach(m)
+        self._menu_tipper = MenuTipper(self)
+        self._menu_tipper.install()
 
         self.configure(menu=menubar)
 
