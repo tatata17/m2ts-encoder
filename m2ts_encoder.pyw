@@ -2748,197 +2748,75 @@ MENU_TIPS = {
     "アップデートを確認": "新しい版があるか確認して、あれば更新します(今の版は自動でバックアップします)。",
     "起動時に更新を確認する": "ONにすると、起動の数秒後に新しい版を確認して、あれば更新の案内を出します。",
     "旧版のバックアップを管理": "アップデートのたびに自動で作られる旧版のバックアップを、一覧・削除・その版に戻す、ができます。",
+    "メニューの説明": "メニューの全項目と、その説明を、1つの画面で読めます(絞り込みもできます)。",
     "バージョン情報": "いまのバージョンと、配布元を表示します。",
 }
 
 
-class MenuTipper:
-    """
-    メニュー項目にマウスを乗せる(またはキーで選ぶ)と、説明を表示する。Tkのメニューには標準の機能が無いため、
-    項目が選ばれた時の通知 <<MenuSelect>> を使う。説明は、画面下の状態表示と、小さな吹き出しの両方に出す。
-    """
+class MenuGuideWindow(tk.Toplevel):
+    """「メニューの説明」: メニューの全項目と説明を、1つの画面で読めるようにする(絞り込みつき)"""
 
-    def __init__(self, app: "tk.Tk"):
+    def __init__(self, app: "App"):
+        super().__init__(app)
         self.app = app
-        self._tip: Optional[tk.Toplevel] = None
-        self._saved_status: Optional[str] = None
-        self._hide_job = None
-        self._debug_left = 3          # 動作確認用: 最初の数回だけ、通知を受け取ったことをログに残す
+        self.title("メニューの説明")
+        self.geometry("820x600")
+        self.minsize(520, 320)
+        self.filter_var = tk.StringVar()
+        top = ttk.Frame(self, padding=(8, 6))
+        top.pack(fill=tk.X)
+        ttk.Label(top, text="絞り込み:").pack(side=tk.LEFT)
+        ttk.Entry(top, textvariable=self.filter_var, width=34).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(top, text="クリア", command=lambda: self.filter_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
+        self.box = scrolledtext.ScrolledText(self, wrap=tk.WORD, font=("Meiryo UI", 10))
+        self.box.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        self.box.tag_configure("head", font=("Meiryo UI", 11, "bold"), spacing1=10, spacing3=2)
+        self.box.tag_configure("label", font=("Meiryo UI", 10, "bold"))
+        self.box.tag_configure("tip", lmargin1=24, lmargin2=24, spacing3=4)
+        self.filter_var.trace_add("write", lambda *_: self._fill())
+        self._fill()
 
-    def install(self):
-        self.app.bind_class("Menu", "<<MenuSelect>>", self._on_event, add="+")
-        self._select_events = 0
-        if sys.platform == "win32":
-            # WindowsのメニューはTkに通知が届かないことがあるため、Windowsのメニュー自体に問い合わせる方式も併用する
-            self.app.after(500, self._poll_win)
-
-    def _poll_win(self):
-        try:
-            self._poll_win_once()
-        except Exception:
-            pass
-        try:
-            self.app.after(120, self._poll_win)
-        except tk.TclError:
-            pass
-
-    def _poll_win_once(self):
-        """開いているメニュー(Windowsの #32768 ウインドウ)の、マウスが乗っている項目の文字を読んで、説明を出す"""
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-        user32.FindWindowW.restype = wintypes.HWND
-        user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-        user32.SendMessageW.restype = ctypes.c_ssize_t
-        hwnd = user32.FindWindowW("#32768", None)
-        if not hwnd or not user32.IsWindowVisible(hwnd):
-            if self._tip is not None or self._saved_status is not None:
-                self._restore_status()
-                self.hide()
-            self._last_item = None
-            return
-        hmenu = user32.SendMessageW(hwnd, 0x01E1, 0, 0)        # MN_GETHMENU
-        if not hmenu:
-            return
-
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-        class RECT(ctypes.Structure):
-            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
-
-        pt = POINT()
-        user32.GetCursorPos(ctypes.byref(pt))
-        user32.MenuItemFromPoint.argtypes = [wintypes.HWND, ctypes.c_void_p, POINT]
-        user32.MenuItemFromPoint.restype = ctypes.c_int
-        idx = user32.MenuItemFromPoint(None, hmenu, pt)
-        if idx < 0:
-            self._last_item = None
-            self._restore_status()
-            self.hide()
-            return
-        if getattr(self, "_last_item", None) == (hmenu, idx):
-            return
-        self._last_item = (hmenu, idx)
-        buf = ctypes.create_unicode_buffer(512)
-        user32.GetMenuStringW.argtypes = [ctypes.c_void_p, wintypes.UINT, wintypes.LPWSTR, ctypes.c_int, wintypes.UINT]
-        user32.GetMenuStringW(hmenu, idx, buf, 512, 0x400)    # MF_BYPOSITION
-        label = buf.value.split("\t")[0].replace("&", "")
-        text = self._text_for(label)
-        if self._debug_left > 0 and label:
-            self._debug_left -= 1
+    def _items(self):
+        """メニューの実際の並び順で、(メニュー名, [(項目名, 説明)…]) を作る"""
+        result = []
+        for name, menu in self.app._menu_groups:
+            rows = []
             try:
-                self.app._append_log(f"[メニュー説明] (Windowsのメニューから読みました) {label[:30]} → {'説明あり' if text else '説明なし'}")
-            except Exception:
-                pass
-        if not text:
-            self._restore_status()
-            self.hide()
-            return
-        rect = RECT()
-        user32.GetMenuItemRect.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(RECT)]
-        user32.GetMenuItemRect(None, hmenu, idx, ctypes.byref(rect))
-        win = RECT()
-        user32.GetWindowRect(hwnd, ctypes.byref(win))
-        if self._saved_status is None:
-            self._saved_status = self.app.status_var.get()
-        self.app.status_var.set(text)
-        self.show(None, text, win.right + 2, rect.top, left_x=win.left)
-
-    def _text_for(self, label: str) -> Optional[str]:
-        text = MENU_TIPS.get(label)
-        if text is None:
-            for key, t in MENU_TIPS.items():
-                if len(key) >= 4 and label.startswith(key):
-                    return t
-        return text
-
-    def _on_event(self, event):
-        menu = event.widget
-        try:
-            idx = menu.index("active")
-        except tk.TclError:
-            idx = None
-        label = None
-        if idx is not None and idx != "none":
-            try:
-                label = menu.entrycget(idx, "label")
+                last = menu.index("end")
             except tk.TclError:
-                label = None
-        text = None
-        if label:
-            text = MENU_TIPS.get(label)
-            if text is None:
-                for key, t in MENU_TIPS.items():
-                    if len(key) >= 4 and label.startswith(key):
-                        text = t
-                        break
-        self._select_events += 1
-        if self._debug_left > 0 and label:
-            self._debug_left -= 1
-            try:
-                self.app._append_log(f"[メニュー説明] 通知を受け取りました: {label[:30]} → {'説明あり' if text else '説明なし'}")
-            except Exception:
-                pass
-        if not text:
-            self._restore_status()
-            self.hide()
-            return
-        if self._saved_status is None:
-            self._saved_status = self.app.status_var.get()
-        self.app.status_var.set(text)
-        try:
-            x = menu.winfo_rootx() + menu.winfo_width() + 2
-            y = menu.winfo_rooty() + (menu.yposition(idx) if idx is not None else 0)
-            self.show(menu, text, x, y)
-        except tk.TclError:
-            self.hide()
-        if self._hide_job is not None:
-            try:
-                self.app.after_cancel(self._hide_job)
-            except tk.TclError:
-                pass
-        self._hide_job = self.app.after(6000, self._timeout)
+                last = None
+            if last is not None:
+                for i in range(last + 1):
+                    try:
+                        if menu.type(i) in ("separator", "tearoff"):
+                            continue
+                        label = menu.entrycget(i, "label")
+                    except tk.TclError:
+                        continue
+                    tip = MENU_TIPS.get(label)
+                    if tip is None:
+                        for key, t in MENU_TIPS.items():
+                            if len(key) >= 4 and label.startswith(key):
+                                tip = t
+                                break
+                    rows.append((label, tip or ""))
+            result.append((name, MENU_TIPS.get(name, ""), rows))
+        return result
 
-    def _timeout(self):
-        self._hide_job = None
-        self._restore_status()
-        self.hide()
-
-    def _restore_status(self):
-        if self._saved_status is not None:
-            self.app.status_var.set(self._saved_status)
-            self._saved_status = None
-
-    def show(self, menu: Optional["tk.Menu"], text: str, x: int, y: int, left_x: Optional[int] = None):
-        self.hide()
-        try:
-            tip = tk.Toplevel(self.app)
-            tip.wm_overrideredirect(True)
-            try:
-                tip.wm_attributes("-topmost", True)
-            except tk.TclError:
-                pass
-            tk.Label(tip, text=text, justify=tk.LEFT, wraplength=360, background="#ffffe1", foreground="#000000",
-                     relief=tk.SOLID, borderwidth=1, padx=6, pady=4).pack()
-            tip.update_idletasks()
-            w, h = tip.winfo_reqwidth(), tip.winfo_reqheight()
-            if x + w > tip.winfo_screenwidth() - 4:       # 右に入らなければ、メニューの左側に出す
-                x = max(0, (menu.winfo_rootx() if menu is not None else (left_x or 0)) - w - 2)
-            y = max(0, min(y, tip.winfo_screenheight() - h - 4))
-            tip.wm_geometry(f"+{x}+{y}")
-            self._tip = tip
-        except tk.TclError:
-            self._tip = None
-
-    def hide(self):
-        if self._tip is not None:
-            try:
-                self._tip.destroy()
-            except tk.TclError:
-                pass
-            self._tip = None
+    def _fill(self):
+        terms = self.app._norm_search(self.filter_var.get()).split()
+        self.box.configure(state=tk.NORMAL)
+        self.box.delete("1.0", tk.END)
+        for name, name_tip, rows in self._items():
+            shown = [(l, t) for l, t in rows if not terms or all(x in self.app._norm_search(l + " " + t) for x in terms)]
+            if not shown:
+                continue
+            self.box.insert(tk.END, f"【{name}】 {name_tip}\n", "head")
+            for label, tip in shown:
+                self.box.insert(tk.END, f"・{label}\n", "label")
+                if tip:
+                    self.box.insert(tk.END, f"{tip}\n", "tip")
+        self.box.configure(state=tk.DISABLED)
 
 
 def _tooltip_text_for(label: str) -> Optional[str]:
@@ -3117,7 +2995,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.11"
+APP_VERSION = "2026.10.30.12"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5576,15 +5454,16 @@ class App(tk.Tk):
         help_menu.add_checkbutton(
             label="起動時に更新を確認する", variable=self.auto_update_var, command=self._on_auto_update_toggled
         )
+        help_menu.add_command(label="メニューの説明...", command=self._open_menu_guide)
         help_menu.add_command(label="旧版のバックアップを管理...", command=self._open_backup_manager)
         help_menu.add_separator()
         help_menu.add_command(label="バージョン情報", command=self._show_about)
         menubar.add_cascade(label="ヘルプ", menu=help_menu)
         self._help_menu = help_menu
 
-        # メニュー項目にも、ツールチップ(説明)を出す
-        self._menu_tipper = MenuTipper(self)
-        self._menu_tipper.install()
+        # 「ヘルプ → メニューの説明」で一覧表示するための、メニューの一覧
+        self._menu_groups = [("ファイル", file_menu), ("ツール", tool_menu), ("設定", settings_menu),
+                             ("ログ", log_menu), ("ヘルプ", help_menu)]
 
         self.configure(menu=menubar)
 
@@ -7518,6 +7397,17 @@ class App(tk.Tk):
     def _on_auto_update_toggled(self):
         self.settings["auto_update_check"] = "1" if self.auto_update_var.get() else "0"
         save_settings(self.settings)
+
+    def _open_menu_guide(self):
+        win = getattr(self, "_guide_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        self._guide_win = MenuGuideWindow(self)
 
     def _open_backup_manager(self):
         win = getattr(self, "_backup_win", None)
