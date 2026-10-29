@@ -2892,7 +2892,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.5"
+APP_VERSION = "2026.10.30.6"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -7903,6 +7903,12 @@ def set_window_taskbar_identity(tk_window) -> str:
 if __name__ == "__main__":
     _proc_id_result = set_taskbar_identity()
     app = App()
-    # 窓ができてから、窓にもIDを付けて、結果をログに残す(タスクバーのまとまり対策)
-    app.after(500, lambda: app._append_log("[タスクバー] " + _proc_id_result + " / " + set_window_taskbar_identity(app)))
+    # 窓ができてから、窓にもIDを付ける(タスクバーのまとまり対策)。うまくいかなかった時だけ、ログに残す
+
+    def _apply_window_identity():
+        results = [_proc_id_result, set_window_taskbar_identity(app)]
+        if any(("失敗" in r or "例外" in r) for r in results):
+            app._append_log("[タスクバー] " + " / ".join(results))
+
+    app.after(500, _apply_window_identity)
     app.mainloop()
