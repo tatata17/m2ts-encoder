@@ -2892,7 +2892,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.6"
+APP_VERSION = "2026.10.30.7"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -2960,6 +2960,57 @@ def download_update_source(info: Dict[str, object]) -> bytes:
     return raw
 
 
+def update_backup_dir() -> str:
+    return os.path.join(get_app_data_dir(), "backup")
+
+
+def update_backup_keep() -> int:
+    """アップデート時に自動で残すバックアップの本数(設定。1〜30、既定はUPDATE_BACKUP_KEEP)"""
+    try:
+        n = int(load_settings().get("update_backup_keep", UPDATE_BACKUP_KEEP))
+    except (TypeError, ValueError):
+        n = UPDATE_BACKUP_KEEP
+    return max(1, min(30, n))
+
+
+_BACKUP_NAME_RE = re.compile(r"m2ts_encoder_(.+)_(\d{8}-\d{6})\.pyw$")
+
+
+def list_update_backups() -> List[dict]:
+    """旧版のバックアップを、新しい順に返す: [{path, name, version, stamp, size}]"""
+    d = update_backup_dir()
+    result: List[dict] = []
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return result
+    for n in names:
+        m = _BACKUP_NAME_RE.match(n)
+        if not m:
+            continue
+        path = os.path.join(d, n)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        result.append({"path": path, "name": n, "version": m.group(1), "stamp": m.group(2), "size": size})
+    result.sort(key=lambda b: b["stamp"], reverse=True)
+    return result
+
+
+def prune_update_backups(keep: Optional[int] = None) -> int:
+    """バックアップを新しい順に keep 本だけ残して、あとを削除する。削除した本数を返す"""
+    keep = update_backup_keep() if keep is None else keep
+    removed = 0
+    for b in list_update_backups()[keep:]:
+        try:
+            os.remove(b["path"])
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def install_update(raw: bytes) -> str:
     """今のスクリプトをバックアップしてから、新しい版に置き換える。バックアップのパスを返す"""
     script = os.path.abspath(__file__)
@@ -2972,14 +3023,7 @@ def install_update(raw: bytes) -> str:
     with io.open(tmp, "wb") as f:
         f.write(raw)
     os.replace(tmp, script)
-    try:  # バックアップは新しい順に一定数だけ残す
-        olds = sorted(
-            (n for n in os.listdir(backup_dir) if n.startswith("m2ts_encoder_") and n.endswith(".pyw")), reverse=True
-        )
-        for n in olds[UPDATE_BACKUP_KEEP:]:
-            os.remove(os.path.join(backup_dir, n))
-    except OSError:
-        pass
+    prune_update_backups()
     return backup_path
 
 
@@ -4035,6 +4079,133 @@ class DuplicateEncodeWindow(tk.Toplevel):
         self.reload()
 
 
+class BackupManagerWindow(tk.Toplevel):
+    """旧版のバックアップ(アップデートのたびに自動で作られる)を一覧して、削除したり、その版に戻したりする"""
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        self.title("旧版のバックアップを管理")
+        self.geometry("760x420")
+        self.minsize(560, 300)
+        self.rows: Dict[str, dict] = {}
+        self.info_var = tk.StringVar()
+        self.keep_var = tk.IntVar(value=update_backup_keep())
+
+        self.tree = ttk.Treeview(self, columns=("version", "stamp", "size"), show="headings", selectmode="extended")
+        for c, label, w, anc in (("version", "バージョン(置き換えられた版)", 260, "w"),
+                                 ("stamp", "バックアップした日時", 200, "w"), ("size", "サイズ", 90, "e")):
+            self.tree.heading(c, text=label)
+            self.tree.column(c, width=w, anchor=anc)
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 0))
+        self.range_select = RangeSelect(self.tree)
+
+        ops = ttk.Frame(self, padding=(8, 6, 8, 0))
+        ops.pack(fill=tk.X)
+        ttk.Button(ops, text="選んだバックアップを削除", command=self._delete_selected).pack(side=tk.LEFT)
+        ttk.Button(ops, text="最新の1本を残して全部削除", command=self._delete_all_but_latest).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="選んだ版に戻す", command=self._rollback).pack(side=tk.LEFT, padx=(14, 0))
+        ttk.Button(ops, text="フォルダを開く", command=self._open_folder).pack(side=tk.RIGHT)
+
+        keep = ttk.Frame(self, padding=(8, 6))
+        keep.pack(fill=tk.X)
+        ttk.Label(keep, text="アップデートのとき、自動で残す本数:").pack(side=tk.LEFT)
+        ttk.Spinbox(keep, from_=1, to=30, width=4, textvariable=self.keep_var, command=self._save_keep).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Label(keep, text="本(これを超えた古いものは、アップデートのたびに自動で削除されます)").pack(side=tk.LEFT, padx=(6, 0))
+        self.keep_var.trace_add("write", lambda *_: self._save_keep())
+        ttk.Label(self, textvariable=self.info_var).pack(fill=tk.X, padx=10, pady=(0, 8))
+        attach_tooltips(self)
+        self.reload()
+
+    def _save_keep(self):
+        try:
+            n = max(1, min(30, int(self.keep_var.get())))
+        except (tk.TclError, ValueError):
+            return
+        self.app.settings["update_backup_keep"] = str(n)
+        save_settings(self.app.settings)
+
+    def reload(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        self.rows = {}
+        items = list_update_backups()
+        for b in items:
+            st = b["stamp"]
+            stamp_text = f"{st[:4]}/{st[4:6]}/{st[6:8]} {st[9:11]}:{st[11:13]}:{st[13:15]}"
+            iid = self.tree.insert("", "end", values=(b["version"], stamp_text, f"{b['size'] / 1024:,.0f} KB"))
+            self.rows[iid] = b
+        total = sum(b["size"] for b in items)
+        self.info_var.set(f"{len(items)}本 / 合計 {total / 1024 / 1024:.1f} MB    保存先: {update_backup_dir()}")
+
+    def _selected(self) -> List[dict]:
+        return [self.rows[i] for i in self.tree.selection() if i in self.rows]
+
+    def _remove(self, items: List[dict]):
+        errors = []
+        for b in items:
+            try:
+                os.remove(b["path"])
+            except OSError as e:
+                errors.append(f"{b['name']}: {e}")
+        self.reload()
+        if errors:
+            messagebox.showerror("削除できませんでした", "\n".join(errors[:10]), parent=self)
+
+    def _delete_selected(self):
+        items = self._selected()
+        if not items:
+            messagebox.showinfo("情報", "削除するバックアップを選んでください。", parent=self)
+            return
+        if messagebox.askyesno("削除の確認", f"選んだ{len(items)}本のバックアップを削除します。\n元には戻せません。", parent=self):
+            self._remove(items)
+
+    def _delete_all_but_latest(self):
+        items = list_update_backups()[1:]
+        if not items:
+            messagebox.showinfo("情報", "削除できるバックアップがありません(最新の1本だけです)。", parent=self)
+            return
+        if messagebox.askyesno("削除の確認", f"最新の1本を残して、{len(items)}本のバックアップを削除します。\n元には戻せません。", parent=self):
+            self._remove(items)
+
+    def _open_folder(self):
+        d = update_backup_dir()
+        try:
+            os.makedirs(d, exist_ok=True)
+            if sys.platform == "win32":
+                os.startfile(d)  # type: ignore[attr-defined]
+            else:
+                messagebox.showinfo("保存先", d, parent=self)
+        except OSError as e:
+            messagebox.showerror("エラー", str(e), parent=self)
+
+    def _rollback(self):
+        sel = self._selected()
+        if len(sel) != 1:
+            messagebox.showinfo("情報", "戻したい版を1本だけ選んでください。", parent=self)
+            return
+        if self.app.encoding_running:
+            messagebox.showinfo("情報", "エンコード中は戻せません。終わってからやり直してください。", parent=self)
+            return
+        b = sel[0]
+        if not messagebox.askyesno(
+                "版に戻す",
+                f"バージョン {b['version']} に戻して、アプリを再起動しますか？\n"
+                "(今の版も、バックアップとして残します)\n\n"
+                "※ 起動時の更新確認をONにしていると、また新しい版を勧められます。",
+                parent=self):
+            return
+        try:
+            with io.open(b["path"], "rb") as f:
+                raw = f.read()
+            install_update(raw)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("エラー", f"戻せませんでした。今の版はそのままです。\n\n{e}", parent=self)
+            return
+        messagebox.showinfo("版に戻す", f"バージョン {b['version']} に戻しました。再起動します。", parent=self)
+        self.app._restart_app()
+
+
 class SeriesSortWindow(tk.Toplevel):
     """
     「作品ごとに仕分け」: 仕分け済みの放送局フォルダ(仕分け/放送局名/)の中で、作品名のフォルダに振り分ける。
@@ -4655,6 +4826,7 @@ class App(tk.Tk):
         help_menu.add_checkbutton(
             label="起動時に更新を確認する", variable=self.auto_update_var, command=self._on_auto_update_toggled
         )
+        help_menu.add_command(label="旧版のバックアップを管理...", command=self._open_backup_manager)
         help_menu.add_separator()
         help_menu.add_command(label="バージョン情報", command=self._show_about)
         menubar.add_cascade(label="ヘルプ", menu=help_menu)
@@ -6592,6 +6764,17 @@ class App(tk.Tk):
     def _on_auto_update_toggled(self):
         self.settings["auto_update_check"] = "1" if self.auto_update_var.get() else "0"
         save_settings(self.settings)
+
+    def _open_backup_manager(self):
+        win = getattr(self, "_backup_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        self._backup_win = BackupManagerWindow(self)
 
     def _show_about(self):
         messagebox.showinfo(
