@@ -1520,11 +1520,15 @@ def resolve_auto_options(
                 notes.append(
                     f"音声 a:{k} は {_fmt_hms(audio[k]['last_time'])} で途切れます(映像は {_fmt_hms(video_end)} まで)"
                 )
+            elif video_first is not None and audio[k].get("first_time") is not None \
+                    and audio[k]["first_time"] - video_first > STREAM_EARLY_END_SECONDS:
+                # 途中から始まる音声も、途切れる音声と同じく、同時に入れると待ち続けて映像が溜まることがある
+                post.append(k)
 
         if post:
             o["audio_ordinals"] = [k for k in selected if k not in post]
             o["audio_post_ordinals"] = post
-            notes.append("→ 途切れる音声は、エンコード後に元のm2tsから合体します(同時に入れると長い番組で失敗するため)")
+            notes.append("→ 途切れる・途中から始まる音声は、エンコード後に元のm2tsから合体します(同時に入れると長い番組で失敗するため)")
 
     sub_early_note = ""
     if o["subs"]:
@@ -2858,7 +2862,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.4"
+APP_VERSION = "2026.10.29.5"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
