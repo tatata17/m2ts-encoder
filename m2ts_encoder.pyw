@@ -2892,7 +2892,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.3"
+APP_VERSION = "2026.10.30.4"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -7811,21 +7811,88 @@ class App(tk.Tk):
         ttk.Button(button_frame, text="閉じる", command=dialog.destroy).pack(side=tk.LEFT)
 
 
-def set_taskbar_identity():
+TASKBAR_APP_ID = "tatata17.m2ts-encoder"
+
+
+def set_taskbar_identity() -> str:
     """
     Windowsのタスクバーは、同じpython.exeで動く窓を1つのアイコンにまとめてしまう。
-    このアプリ専用のID(AppUserModelID)を付けて、他のpywとは別のアイコンとして表示させる。
+    このアプリ専用のID(AppUserModelID)を、プロセスに付けて、他のpywとは別のアイコンとして表示させる。
+    戻り値は結果の説明(ログ用)。
     """
     if sys.platform != "win32":
-        return
+        return "Windows以外"
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("tatata17.m2ts-encoder")
-    except Exception:
-        pass
+        func = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID
+        func.argtypes = [ctypes.c_wchar_p]
+        func.restype = ctypes.c_long
+        hr = func(TASKBAR_APP_ID)
+        return "プロセスにID設定 " + ("成功" if hr == 0 else f"失敗(0x{hr & 0xFFFFFFFF:08X})")
+    except Exception as e:  # noqa: BLE001
+        return f"プロセスにID設定 例外({e})"
+
+
+def set_window_taskbar_identity(tk_window) -> str:
+    """
+    ウインドウ自体にもIDを付ける(プロセスのIDだけでは分かれない環境の保険)。
+    SHGetPropertyStoreForWindow で PKEY_AppUserModel_ID を書く。結果の説明を返す。
+    """
+    if sys.platform != "win32":
+        return "Windows以外"
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort), ("Data3", ctypes.c_ushort),
+                        ("Data4", ctypes.c_ubyte * 8)]
+
+        def make_guid(text: str) -> GUID:
+            import uuid
+            u = uuid.UUID(text)
+            g = GUID()
+            g.Data1, g.Data2, g.Data3 = u.time_low, u.time_mid, u.time_hi_version
+            for i, b in enumerate(u.bytes[8:]):
+                g.Data4[i] = b
+            return g
+
+        class PROPERTYKEY(ctypes.Structure):
+            _fields_ = [("fmtid", GUID), ("pid", wintypes.DWORD)]
+
+        class PROPVARIANT(ctypes.Structure):
+            _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort), ("r2", ctypes.c_ushort),
+                        ("r3", ctypes.c_ushort), ("ptr", ctypes.c_void_p), ("pad", ctypes.c_void_p)]
+
+        tk_window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(tk_window.winfo_id()) or tk_window.winfo_id()
+        iid = make_guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")   # IID_IPropertyStore
+        store = ctypes.c_void_p()
+        get_store = ctypes.windll.shell32.SHGetPropertyStoreForWindow
+        get_store.argtypes = [wintypes.HWND, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)]
+        get_store.restype = ctypes.c_long
+        hr = get_store(hwnd, ctypes.byref(iid), ctypes.byref(store))
+        if hr != 0 or not store.value:
+            return f"ウインドウにID設定 失敗(0x{hr & 0xFFFFFFFF:08X})"
+        text = ctypes.create_unicode_buffer(TASKBAR_APP_ID)
+        pv = PROPVARIANT()
+        pv.vt = 31   # VT_LPWSTR
+        pv.ptr = ctypes.cast(text, ctypes.c_void_p).value
+        key = PROPERTYKEY(make_guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5)   # PKEY_AppUserModel_ID
+        vtbl = ctypes.cast(store, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        set_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(PROPERTYKEY),
+                                       ctypes.POINTER(PROPVARIANT))(vtbl[6])
+        release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtbl[2])
+        hr = set_value(store, ctypes.byref(key), ctypes.byref(pv))
+        release(store)
+        return "ウインドウにID設定 " + ("成功" if hr == 0 else f"失敗(0x{hr & 0xFFFFFFFF:08X})")
+    except Exception as e:  # noqa: BLE001
+        return f"ウインドウにID設定 例外({e})"
 
 
 if __name__ == "__main__":
-    set_taskbar_identity()
+    _proc_id_result = set_taskbar_identity()
     app = App()
+    # 窓ができてから、窓にもIDを付けて、結果をログに残す(タスクバーのまとまり対策)
+    app.after(500, lambda: app._append_log("[タスクバー] " + _proc_id_result + " / " + set_window_taskbar_identity(app)))
     app.mainloop()
