@@ -532,6 +532,23 @@ def read_program_info_from_sidecar_csv(csv_path: str) -> Tuple[str, str]:
     return program, format_date_digits(normalize_date_digits(date_cell)) if date_cell else ""
 
 
+def read_start_time_from_sidecar_csv(csv_path: str) -> str:
+    """対になっているcsv(タブ区切り)から、放送の開始時刻 "HH:MM" を読む。読めなければ空文字"""
+    try:
+        text, _enc = read_text_auto(csv_path)
+    except OSError:
+        return ""
+    first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
+    if "\t" not in first_line:
+        return ""
+    cells = [c.strip() for c in first_line.split("\t")]
+    if len(cells) > 3:
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", cells[3])
+        if m:
+            return f"{int(m.group(1)):02d}:{m.group(2)}"
+    return ""
+
+
 def list_sorted_videos(sort_root: str) -> List[str]:
     """仕分けフォルダ(の下)にある mkv/mp4 の一覧"""
     result: List[str] = []
@@ -2875,7 +2892,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.8"
+APP_VERSION = "2026.10.30.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3667,25 +3684,26 @@ DUP_LENGTH_TOLERANCE_SEC = 3.0   # 長さの差がこれ以内なら「同じ番
 
 def duplicate_group_key(entry: dict, norm) -> Tuple[str, str, str]:
     """
-    二重エンコードの候補をまとめるキー。対のcsvから読めた(番組名, 放送日)が同じなら同じグループ。
+    二重エンコードの候補をまとめるキー。対のcsvから読めた(番組名, 放送日, 開始時刻)が同じなら同じグループ。
+    同じ番組名・同じ日でも、開始時刻が違えば(再放送など)別の放送として扱う。
     csvが無いものは、ファイル名から末尾の連番「(2)」を除いたものを使う。
     """
     if entry.get("program"):
-        return ("p", norm(entry["program"]), entry.get("date", ""))
+        return ("p", norm(entry["program"]), entry.get("date", "") + " " + entry.get("time", ""))
     stem = os.path.splitext(entry["file"])[0]
     return ("f", norm(re.sub(r"\(\d+\)$", "", stem)), "")
 
 
 class DuplicateEncodeWindow(tk.Toplevel):
     """
-    「二重にエンコードしたファイルを探す」: 変換済みのmkv/mp4のうち、同じ番組(番組名と放送日が同じ)が
+    「二重にエンコードしたファイルを探す」: 変換済みのmkv/mp4のうち、同じ放送(番組名・放送日・開始時刻が同じ)が
     2本以上あるものをグループにして並べ、1本ずつ「残す / 削除」を決めて、まとめて削除する。
     最初は各グループで1本だけ残し、あとは削除の予定にしておく(長さが違うものは別の放送かもしれないので全部残す)。
     削除は、動画と対のcsvを完全に削除する(ごみ箱には入らない)。
     """
 
     COLS = (("group", "組", 44), ("file", "ファイル", 280), ("program", "番組名", 220), ("channel", "放送局", 110),
-            ("date", "放送日", 84), ("where", "場所", 150), ("size", "サイズ", 80), ("length", "長さ", 70),
+            ("date", "放送日時", 120), ("where", "場所", 150), ("size", "サイズ", 80), ("length", "長さ", 70),
             ("mtime", "作成日時", 120), ("action", "処理", 64))
 
     def __init__(self, app: "App"):
@@ -3771,7 +3789,7 @@ class DuplicateEncodeWindow(tk.Toplevel):
         self.manual = set()
         self.lengths = {}
         multi = sorted((g for g in groups.values() if len(g) >= 2),
-                       key=lambda g: (norm(g[0]["program"] or g[0]["file"]), g[0].get("date", "")))
+                       key=lambda g: (norm(g[0]["program"] or g[0]["file"]), g[0].get("date", ""), g[0].get("time", "")))
         for gi, members in enumerate(multi, 1):
             for e in members:
                 try:
@@ -3856,7 +3874,8 @@ class DuplicateEncodeWindow(tk.Toplevel):
         size_text = f"{sz / 1024 / 1024:,.0f} MB"
         mt = time.strftime("%Y/%m/%d %H:%M", time.localtime(e["mtime"])) if e.get("mtime") else ""
         act = "削除" if self.action.get(e["path"]) == "delete" else "残す"
-        return (self.group_of[e["path"]], e["file"], e["program"], e["channel_text"], e["date"], e["where"],
+        return (self.group_of[e["path"]], e["file"], e["program"], e["channel_text"],
+                (e["date"] + " " + e.get("time", "")).strip(), e["where"],
                 size_text, format_duration_text(self.lengths.get(e["path"], None)) if e["path"] in self.lengths else "…",
                 mt, act)
 
@@ -3871,7 +3890,7 @@ class DuplicateEncodeWindow(tk.Toplevel):
         keyfn = {
             "group": None,
             "file": lambda e: norm(e["file"]), "program": lambda e: norm(e["program"]),
-            "channel": lambda e: norm(e["channel_text"]), "date": lambda e: e["date"],
+            "channel": lambda e: norm(e["channel_text"]), "date": lambda e: e["date"] + " " + e.get("time", ""),
             "where": lambda e: norm(e["where"]), "size": lambda e: e.get("size", 0),
             "length": lambda e: self.lengths.get(e["path"]) or 0, "mtime": lambda e: e.get("mtime", 0),
             "action": lambda e: self.action.get(e["path"], ""),
@@ -3898,7 +3917,7 @@ class DuplicateEncodeWindow(tk.Toplevel):
         total = sum(e.get("size", 0) for e in dels)
         n_groups = len(set(self.group_of.values()))
         if not self.entries:
-            self.info_var.set("同じ番組(番組名と放送日が同じ)が2本以上あるファイルは見つかりませんでした。")
+            self.info_var.set("同じ放送(番組名・放送日・開始時刻が同じ)が2本以上あるファイルは見つかりませんでした。")
         else:
             self.info_var.set(
                 f"{len(shown)} / {len(self.entries)}件を表示  /  重なっている番組: {n_groups}組  /  "
@@ -5226,10 +5245,11 @@ class App(tk.Tk):
             csv_path = os.path.splitext(path)[0] + ".csv"
             has_csv = os.path.isfile(csv_path)
             channel = ""
-            program, date = "", ""
+            program, date, start_time = "", "", ""
             if has_csv:
                 channel = read_channel_from_sidecar_csv(csv_path, known_channels) or ""
                 program, date = read_program_info_from_sidecar_csv(csv_path)
+                start_time = read_start_time_from_sidecar_csv(csv_path)
             if is_sorted:
                 state, label = "sorted", "済"
                 if not channel:
@@ -5242,7 +5262,7 @@ class App(tk.Tk):
             where = os.path.relpath(os.path.dirname(path), self.folder)
             entries.append({
                 "path": path, "channel": channel, "state": state, "label": label,
-                "file": os.path.basename(path), "program": program, "date": date,
+                "file": os.path.basename(path), "program": program, "date": date, "time": start_time,
                 "channel_text": channel or ("(不明)" if has_csv else "(csvなし)"),
                 "where": where if where != "." else "(対象フォルダ直下)",
             })
