@@ -2385,6 +2385,11 @@ def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str =
     parts += ["-ss", "0", "-dn", "-ignore_unknown"]
     if o["catv"]:
         parts += ["-max_interleave_delta", "0"]
+    else:
+        # 既定は10秒。番組の途中(CM明けのミニ番組など)で映像の処理が遅れ、コピーする音声だけが先に
+        # 書き込まれると、ファイルの中で音声が映像より遠く手前に置かれ、シークした後その部分が無音になる。
+        # 300秒(単位はマイクロ秒)まで待って並べ替える(0=無制限だと、パケットが来ない音声があると全部をためてしまう)
+        parts += ["-max_interleave_delta", "300000000"]
     parts += ["-c:v", "hevc_nvenc"]
 
     filters: List[str] = []
@@ -2864,7 +2869,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.29.6"
+APP_VERSION = "2026.10.29.7"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5

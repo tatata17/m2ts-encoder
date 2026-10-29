@@ -318,6 +318,10 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">9</span>更新履歴</h2>
   <p>新しい順です。</p>
+  <h3>2026.10.29.7 <small style="color:var(--muted);font-weight:400">(2026-10-29)</small></h3>
+  <ul class="tight">
+    <li>コピーした音声が映像より先に書き込まれ、シークすると終盤が無音になる問題を修正。映像の処理が遅れる区間(CM明けのミニ番組など)で、音声だけが映像よりずっと手前に置かれていました。出力の並べ替えを待つ時間を10秒から300秒に延ばしました。すでにできたMKVは、ffmpeg -i 入力.mkv -map 0 -c copy -max_interleave_delta 0 出力.mkv で再エンコードなしに直せます。</li>
+  </ul>
   <h3>2026.10.29.6 <small style="color:var(--muted);font-weight:400">(2026-10-29)</small></h3>
   <ul class="tight">
     <li>「出力が元の長さより短く終了」の誤判定を修正。あとから音声・字幕を合体した録画で、合体の進捗(途中で終わる英語音声などの位置)を最後の位置として見てしまい、完成品なのに「要確認」になっていました。1回目の到達位置で判断します。</li>
