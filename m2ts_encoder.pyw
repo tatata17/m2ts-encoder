@@ -2995,7 +2995,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.12"
+APP_VERSION = "2026.10.30.13"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5631,6 +5631,11 @@ class App(tk.Tk):
                     self.status_var.set(f"完了: {len(self.results)}件のファイルを処理しました。")
                     self._refresh_channel_combo()
                     self._update_filter_count()
+                    pending = getattr(self, "_pending_update_info", None)
+                    if pending is not None:
+                        self._pending_update_info = None
+                        if not self.encoding_running:
+                            self.after(300, lambda info=pending: self._confirm_and_update(info))
         except queue.Empty:
             pass
 
@@ -7464,8 +7469,11 @@ class App(tk.Tk):
                 pass
             if not manual:
                 self._append_log(f"[アップデート] 新しい版 {info['version']} があります。メニュー「ヘルプ」→「アップデートを確認」から更新できます。")
-                if self.encoding_running or self.scanning:
-                    return   # 作業中は邪魔しない(ログとメニューの表示だけ)
+                if self.encoding_running:
+                    return   # エンコード中は邪魔しない(ログとメニューの表示だけ)
+                if self.scanning:
+                    self._pending_update_info = info   # スキャンが終わってから案内を出す
+                    return
                 self._confirm_and_update(info)   # 起動時の確認でも、更新の案内を自動で出す
                 return
             self._confirm_and_update(info)
