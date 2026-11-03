@@ -152,8 +152,21 @@ def collect_target_files(
 SORT_ROOT_NAME = "仕分け"
 
 
+_TARGET_FOLDER: Optional[str] = None   # 対象フォルダ(指定がなければ、このスクリプトのフォルダ)
+
+
+def get_target_folder() -> str:
+    return _TARGET_FOLDER or get_script_dir()
+
+
+def set_target_folder(path: Optional[str]) -> None:
+    global _TARGET_FOLDER
+    _TARGET_FOLDER = os.path.abspath(path) if path else None
+
+
 def get_sort_root() -> str:
-    return os.path.join(get_script_dir(), SORT_ROOT_NAME)
+    """仕分けフォルダ。対象フォルダの下の「仕分け」"""
+    return os.path.join(get_target_folder(), SORT_ROOT_NAME)
 
 
 def list_sorted_dirs() -> List[str]:
@@ -2585,6 +2598,8 @@ TOOLTIP_TEXTS = {
     "作品名の長さを指定...": "番組名の先頭から何文字を作品名にするかを数で決めます。話数や[二]は除いた名前から数えます。",
     "動かさない": "選んだ行は、今の場所のままにします。",
     "放送局の直下へ": "選んだ行を、作品フォルダではなく放送局フォルダの直下に置きます。",
+    "フォルダを変更...": "m2ts / rplsを読み取るフォルダを選びます。選んだフォルダは次回の起動でも使われます。「仕分け」フォルダも、そのフォルダの下になります。",
+    "このアプリのフォルダに戻す": "対象フォルダを、このアプリ(.pyw)があるフォルダに戻します。",
     "削除にする(この行)": "選んだ行を「削除」にします(実行するまでは何も削除されません)。ダブルクリックでも切り替えられます。",
     "残す(この行)": "選んだ行を「残す」にします。",
     "この組を最初の提案に戻す": "選んだ行の組を、最初の提案(1本だけ残す。長さが違う組は全部残す)に戻します。",
@@ -2995,7 +3010,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.10.30.13"
+APP_VERSION = "2026.11.04.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5173,6 +5188,7 @@ class App(tk.Tk):
 
         # 設定(VLCのパスなど)
         self.settings: Dict[str, str] = load_settings()
+        self._init_target_folder()
         self.noise_check_var = tk.BooleanVar(value=self.settings.get("noise_check", "1") != "0")
 
         # エンコードキュー関連
@@ -5191,6 +5207,8 @@ class App(tk.Tk):
         if self.settings.get("auto_update_check", "1") != "0":
             self.after(4000, lambda: self.check_for_update(manual=False))
         self._refresh_bat_combo()
+        if getattr(self, "_folder_note", ""):
+            self.after(300, lambda: self._append_log("[対象フォルダ] " + self._folder_note))
         self.after(100, self.start_scan)
 
     def _setup_tooltips(self):
@@ -5216,6 +5234,10 @@ class App(tk.Tk):
         top_frame.pack(fill=tk.X)
         self.folder_label = ttk.Label(top_frame, text=f"対象フォルダ: {self.folder}")
         self.folder_label.pack(side=tk.LEFT)
+        self.folder_change_button = ttk.Button(top_frame, text="フォルダを変更...", command=self._change_folder)
+        self.folder_change_button.pack(side=tk.LEFT, padx=(10, 0))
+        self.folder_reset_button = ttk.Button(top_frame, text="このアプリのフォルダに戻す", command=self._reset_folder)
+        self._update_folder_ui()
 
         self._build_menu()
 
@@ -5470,6 +5492,56 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     # スキャン処理
     # ------------------------------------------------------------------
+    def _init_target_folder(self):
+        """起動時の対象フォルダを決める: 起動時に渡されたフォルダ > 前回指定したフォルダ > このアプリのフォルダ"""
+        chosen: Optional[str] = None
+        if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]):
+            chosen = os.path.abspath(sys.argv[1])        # フォルダをpywにドラッグ&ドロップした時など(記憶はしない)
+        else:
+            saved = str(self.settings.get("target_folder", "") or "")
+            if saved and os.path.isdir(saved):
+                chosen = saved
+        self._folder_note = ""
+        if not chosen and self.settings.get("target_folder"):
+            self._folder_note = f"前回指定した対象フォルダが見つからないため、このアプリのフォルダを使います: {self.settings.get('target_folder')}"
+        self.folder = chosen or get_script_dir()
+        set_target_folder(chosen)
+
+    def _update_folder_ui(self):
+        self.folder_label.configure(text=f"対象フォルダ: {self.folder}")
+        custom = os.path.normcase(os.path.abspath(self.folder)) != os.path.normcase(os.path.abspath(get_script_dir()))
+        if custom:
+            if not self.folder_reset_button.winfo_ismapped():
+                self.folder_reset_button.pack(side=tk.LEFT, padx=(6, 0))
+        else:
+            self.folder_reset_button.pack_forget()
+
+    def _apply_folder(self, path: Optional[str], remember: bool = True):
+        if self.scanning or self.encoding_running:
+            messagebox.showinfo("情報", "スキャンまたはエンコード中は、対象フォルダを変えられません。")
+            return
+        new_path = os.path.abspath(path) if path else get_script_dir()
+        self.folder = new_path
+        set_target_folder(path)
+        if remember:
+            if path:
+                self.settings["target_folder"] = new_path
+            else:
+                self.settings.pop("target_folder", None)
+            save_settings(self.settings)
+        self._update_folder_ui()
+        self._done_loaded = False
+        self.start_scan()
+
+    def _change_folder(self):
+        chosen = filedialog.askdirectory(parent=self, title="対象フォルダを選択(m2ts / rplsがあるフォルダ)",
+                                         initialdir=self.folder, mustexist=True)
+        if chosen:
+            self._apply_folder(os.path.normpath(chosen))
+
+    def _reset_folder(self):
+        self._apply_folder(None)
+
     def _on_recursive_toggled(self):
         self.settings["recursive"] = "1" if self.recursive_var.get() else "0"
         save_settings(self.settings)
