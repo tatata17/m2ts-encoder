@@ -3011,7 +3011,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.3"
+APP_VERSION = "2026.11.04.4"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3527,8 +3527,10 @@ _SERIES_STRIP_CHARS = " 　-－―~〜・:：,、。.…"
 def clean_program_title(program: str) -> str:
     """番組名から、先頭の[特集名]、末尾の[二][字]などの記号、話数(#24 / 第3話)を外す"""
     text = (program or "").strip()
-    lead = _SERIES_LEAD_TAG_RE.match(text)
-    if lead and text[lead.end():].strip():
+    for _ in range(4):  # [HV]【先行放送】のように、先頭に記号が続く場合は全部外す
+        lead = _SERIES_LEAD_TAG_RE.match(text)
+        if not (lead and text[lead.end():].strip()):
+            break
         text = text[lead.end():]
     for _ in range(4):
         before = text
