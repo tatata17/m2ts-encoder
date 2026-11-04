@@ -843,6 +843,8 @@ def get_program_name_with_date(rplsinfo_path: str, target_file: str) -> Optional
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 _TIME_RE = re.compile(r"\btime=(\d+):(\d+):(\d+(?:\.\d+)?)")
 _DUP_RE = re.compile(r"\bdup=(\d+)")
+_AUDIO_BSF_ERROR_RE = re.compile(r"error applying bitstream filters to a packet", re.IGNORECASE)
+_AUDIO_GAP_CATEGORY = "音声の一部が欠けた疑い(壊れた音声パケットを飛ばした)"
 _DROP_RE = re.compile(r"\bdrop=(\d+)")
 
 # 内容に関わらず「失敗」扱いにするパターン
@@ -883,6 +885,7 @@ _BOUNDARY_OK_PATTERNS = [
 _HEAD_SECONDS = 5.0            # 録画の先頭とみなす秒数(この範囲の映像/音声エラーは無視)
 _TAIL_SECONDS = 20.0           # 録画の末尾とみなす秒数(終端の切れ目で出るエラーは無視)
 _TRUNCATED_SECONDS = 60.0      # 出力の長さが元よりこの秒数以上短ければ「途中で終わった」と判断
+_DUP_IGNORE_HEAD_SECONDS = 2.0  # 録画の先頭この秒数以内のdupの増加は、開始直後の正常な現象なので無視する
 _DUP_JUMP_THRESHOLD = 30       # 直近の進捗更新間でこれ以上dupが増えたら記録する(参考情報)
 _DROP_JUMP_THRESHOLD = 30      # 同上(drop)。dupと違い、これは単独でも要確認にする
 _DUP_TOTAL_THRESHOLD = 1000    # 累計dupがこれを超えたら記録する(参考情報)
@@ -1057,7 +1060,7 @@ def analyze_ffmpeg_log(
         if dup_match:
             dup_val = int(dup_match.group(1))
             delta = dup_val - prev_dup
-            if delta >= _DUP_JUMP_THRESHOLD:
+            if delta >= _DUP_JUMP_THRESHOLD and current_time_seconds >= _DUP_IGNORE_HEAD_SECONDS:
                 add_event(current_time_seconds, "重複フレーム(dup)が急増", f"+{delta}、累計{dup_val}")
             prev_dup = dup_val
 
@@ -1072,6 +1075,11 @@ def analyze_ffmpeg_log(
         for pattern, category in _CRITICAL_PATTERNS:
             if pattern.search(line):
                 add_event(current_time_seconds, category)
+
+        if _AUDIO_BSF_ERROR_RE.search(line):
+            # コピーしている音声の、壊れたパケットを飛ばした(その部分の音が欠ける)。先頭はAACの形式情報が
+            # 不完全なために必ず出るので、他のデコード系エラーと同じ扱い(先頭・末尾は無視)にする
+            add_event(current_time_seconds, _AUDIO_GAP_CATEGORY)
 
         for pattern, category in _WARNING_PATTERNS:
             if pattern.search(line):
@@ -3011,7 +3019,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.4"
+APP_VERSION = "2026.11.04.5"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5

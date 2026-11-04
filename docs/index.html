@@ -319,6 +319,10 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">9</span>更新履歴</h2>
   <p>新しい順です。</p>
+  <h3>2026.11.04.5 <small style="color:var(--muted);font-weight:400">(2026-11-04)</small></h3>
+  <ul class="tight">
+    <li>エンコード診断を改善。(1) 録画の先頭2秒以内の「重複フレーム(dup)の急増」は、開始直後の正常な現象なので無視するようにしました。(2) コピーしている音声の壊れたパケットを飛ばした場合(ログの「Error applying bitstream filters」)を、「音声の一部が欠けた疑い」として診断に出すようにしました。録画の先頭と末尾で出るものは、これまでの他のエラーと同じく無視します。</li>
+  </ul>
   <h3>2026.11.04.4 <small style="color:var(--muted);font-weight:400">(2026-11-04)</small></h3>
   <ul class="tight">
     <li>作品ごとの仕分けで、番組名の先頭に[HV]【先行放送】のように記号が続く場合、全部外して作品名を決めるようにしました(以前は1つ目だけで、「【先行放送】なんだかんだワンダー」のようなフォルダ名になっていました)。</li>
