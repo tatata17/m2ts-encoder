@@ -3037,7 +3037,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.9"
+APP_VERSION = "2026.11.04.10"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5276,12 +5276,28 @@ class App(tk.Tk):
         self._setup_tooltips()
         # 前回、途中で終わったログを、まとめに追記する。保存期間を過ぎた分の整理も(裏で)する
         threading.Thread(target=lambda: (fold_leftover_run_logs(), prune_log_store()), daemon=True).start()
-        if self.settings.get("auto_update_check", "1") != "0":
-            self.after(4000, lambda: self.check_for_update(manual=False))
         self._refresh_bat_combo()
         if getattr(self, "_folder_note", ""):
             self.after(300, lambda: self._append_log("[対象フォルダ] " + self._folder_note))
-        self.after(100, self.start_scan)
+        if self.settings.get("auto_update_check", "1") != "0":
+            # スキャンの前に更新を確認する。新しい版があれば先に案内を出し、答えたあとでスキャンを始める。
+            # 確認が遅い(ネットが遅い・つながらない)場合は待たず、3秒でスキャンを始める
+            self._scan_started = False
+            self._update_decided = False
+            self.after(100, lambda: self.check_for_update(manual=False, startup=True))
+            self.after(3000, self._start_scan_fallback)
+        else:
+            self.after(100, self.start_scan)
+
+    def _start_scan_once(self):
+        if getattr(self, "_scan_started", True):
+            return
+        self._scan_started = True
+        self.start_scan()
+
+    def _start_scan_fallback(self):
+        if not getattr(self, "_update_decided", False):  # 確認の結果が出ていなければ待たない
+            self._start_scan_once()
 
     def _setup_tooltips(self):
         attach_tooltips(self)
@@ -7609,7 +7625,7 @@ class App(tk.Tk):
             parent=self,
         )
 
-    def check_for_update(self, manual: bool = False):
+    def check_for_update(self, manual: bool = False, startup: bool = False):
         """バックグラウンドで更新を確認する。manual=Trueは結果を必ずダイアログで知らせる"""
         if getattr(self, "_update_checking", False):
             return
@@ -7631,12 +7647,18 @@ class App(tk.Tk):
                 self.after(300, poll)
                 return
             self._update_checking = False
+            if startup:
+                self._update_decided = True
             if kind == "err":
+                if startup:
+                    self._start_scan_once()
                 if manual:
                     messagebox.showerror("アップデート", f"更新の確認に失敗しました。\nネットワークに接続できているか確認してください。\n\n{value}", parent=self)
                 return
             info = value
             if not is_newer_version(str(info["version"])):
+                if startup:
+                    self._start_scan_once()
                 if manual:
                     messagebox.showinfo("アップデート", f"最新の版です。(バージョン {APP_VERSION})", parent=self)
                 return
@@ -7651,16 +7673,19 @@ class App(tk.Tk):
                 if self.scanning:
                     self._pending_update_info = info   # スキャンが終わってから案内を出す
                     return
-                self._confirm_and_update(info)   # 起動時の確認でも、更新の案内を自動で出す
+                updating = self._confirm_and_update(info)   # 起動時の確認でも、更新の案内を自動で出す
+                if startup and not updating:
+                    self._start_scan_once()   # 更新しない場合は、案内に答えたあとでスキャンを始める
                 return
             self._confirm_and_update(info)
 
         self.after(300, poll)
 
-    def _confirm_and_update(self, info: Dict[str, object]):
+    def _confirm_and_update(self, info: Dict[str, object]) -> bool:
+        """更新の案内を出し、更新を始めたらTrue(しない・できないならFalse)を返す"""
         if self.encoding_running:
             messagebox.showinfo("アップデート", "エンコード中は更新できません。終わってからやり直してください。", parent=self)
-            return
+            return False
         notes = str(info.get("notes", "")).strip() or "(更新内容の記載なし)"
         if not messagebox.askyesno(
             "アップデート",
@@ -7668,7 +7693,7 @@ class App(tk.Tk):
             "更新して、アプリを再起動しますか?\n(今の版は自動でバックアップします)",
             parent=self,
         ):
-            return
+            return False
         self.status_var.set("アップデートをダウンロード中...")
         result_queue: "queue.Queue" = queue.Queue()
 
@@ -7689,6 +7714,7 @@ class App(tk.Tk):
             if kind == "err":
                 self.status_var.set("アップデートに失敗しました。")
                 messagebox.showerror("アップデート", f"ダウンロードに失敗しました。今の版はそのままです。\n\n{value}", parent=self)
+                self._start_scan_once()
                 return
             if self.encoding_running:
                 messagebox.showinfo("アップデート", "エンコードが始まったため、更新を中止しました。", parent=self)
@@ -7698,6 +7724,7 @@ class App(tk.Tk):
             except Exception as e:
                 self.status_var.set("アップデートに失敗しました。")
                 messagebox.showerror("アップデート", f"置き換えに失敗しました。今の版はそのままです。\n\n{e}", parent=self)
+                self._start_scan_once()
                 return
             messagebox.showinfo(
                 "アップデート", f"バージョン {info['version']} に更新しました。再起動します。\n\n(旧版のバックアップ: {backup_path})", parent=self
@@ -7705,6 +7732,7 @@ class App(tk.Tk):
             self._restart_app()
 
         self.after(300, poll)
+        return True
 
     def _restart_app(self):
         script = os.path.abspath(__file__)
