@@ -2745,13 +2745,15 @@ class Tooltip:
 
 MENU_TIPS = {
     "ファイル": "再スキャンや、一覧のCSV保存、終了。",
-    "ツール": "仕分け・縦横比の修正・二重エンコードの削除など、たまに使う機能。",
+    "ツール": "仕分け(チャンネル別・作品ごと)・ファイル名や縦横比の修正・二重エンコードや変換済みm2tsの削除など、たまに使う機能。",
     "設定": "エンコード設定とバッチファイルの管理、CUDAデコードの常時ON/OFF。",
     "ログ": "実行ログの保存・管理と、エンコード診断結果の表示。",
     "ヘルプ": "アップデートの確認、旧版のバックアップ管理、バージョン情報。",
     "再スキャン": "対象フォルダをもう一度読み直して、一覧を作り直します。",
     "一覧をCSVに保存...": "いま表示している一覧(ファイル名・番組名・放送局など)を、CSVファイルに保存します。",
     "終了": "アプリを終了します。エンコード中は、先に止めてください。",
+    "仕分け": "仕分けに関する機能をまとめたメニューです(まとめて仕分け・チャンネル別・作品ごと)。",
+    "まとめて仕分け(チャンネル別→作品ごと)...": "チャンネル別の仕分けを行い、終わったら続けて「作品ごとに仕分け」の画面を開きます。いつもの2段階をひと続きでできます。",
     "チャンネル別に仕分け": "変換済みのmkv/mp4と対のcsvを、「仕分け/放送局名/」のフォルダに移動します。m2tsは動かしません。",
     "ファイル名の記号を全角に修正": "古い版で ; @ $ { } ~ ` に置き換わっていた記号を、本来の全角の記号に戻します。",
     "変換済みm2tsを削除...": "変換済み(mkv/mp4がある)のm2tsだけを削除します。ごみ箱には入りません。mkv/mp4は削除しません。",
@@ -2815,6 +2817,21 @@ class MenuGuideWindow(tk.Toplevel):
                         if menu.type(i) in ("separator", "tearoff"):
                             continue
                         label = menu.entrycget(i, "label")
+                        if menu.type(i) == "cascade":
+                            rows.append((label + " ▶", MENU_TIPS.get(label, "")))
+                            sub = self.app.nametowidget(menu.entrycget(i, "menu"))
+                            for k in range(sub.index("end") + 1):
+                                if sub.type(k) in ("separator", "tearoff"):
+                                    continue
+                                sl = sub.entrycget(k, "label")
+                                stip = MENU_TIPS.get(sl)
+                                if stip is None:
+                                    for key, t in MENU_TIPS.items():
+                                        if len(key) >= 4 and sl.startswith(key):
+                                            stip = t
+                                            break
+                                rows.append(("    " + sl, stip or ""))
+                            continue
                     except tk.TclError:
                         continue
                     tip = MENU_TIPS.get(label)
@@ -3019,7 +3036,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.6"
+APP_VERSION = "2026.11.04.7"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5489,20 +5506,22 @@ class App(tk.Tk):
         self.csv_button = MenuEntryProxy(file_menu, 1)
 
         tool_menu = tk.Menu(menubar, tearoff=0)
-        tool_menu.add_command(label="チャンネル別に仕分け(mkv/mp4/csvを「仕分け」フォルダへ。m2tsが無いものも対象)",
-                              command=self.sort_into_channel_folders)
+        sort_menu = tk.Menu(tool_menu, tearoff=0)
+        sort_menu.add_command(label="まとめて仕分け(チャンネル別→作品ごと)...", command=self._sort_channel_then_series)
+        sort_menu.add_separator()
+        sort_menu.add_command(label="チャンネル別に仕分け", command=self.sort_into_channel_folders)
+        sort_menu.add_command(label="作品ごとに仕分け...", command=self._open_series_sort)
+        tool_menu.add_cascade(label="仕分け", menu=sort_menu)
+        tool_menu.add_separator()
         tool_menu.add_command(label="ファイル名の記号を全角に修正", command=self._fix_semicolon_filenames)
+        tool_menu.add_command(label="縦横比を直す...", command=self._open_aspect_fix)
         tool_menu.add_separator()
-        tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
-        tool_menu.add_separator()
-        tool_menu.add_command(label="作品ごとに仕分け(仕分け済みの放送局フォルダの中を、作品名のフォルダに分ける)...",
-                              command=self._open_series_sort)
-        tool_menu.add_command(label="縦横比を直す(変換済みmkv/mp4。再エンコードなし)...", command=self._open_aspect_fix)
         tool_menu.add_command(label="二重にエンコードしたファイルを探して削除...", command=self._open_duplicates)
+        tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
         menubar.add_cascade(label="ツール", menu=tool_menu)
         self.sort_button = MenuEntryProxy(tool_menu, 0)
-        self.fix_names_item = MenuEntryProxy(tool_menu, 1)
-        self.delete_converted_button = MenuEntryProxy(tool_menu, 3)
+        self.fix_names_item = MenuEntryProxy(tool_menu, 2)
+        self.delete_converted_button = MenuEntryProxy(tool_menu, 6)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="エンコード設定...", command=lambda: self.open_settings_editor("preset"))
@@ -5802,6 +5821,17 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     # 変換済みm2tsの削除
     # ------------------------------------------------------------------
+    def _sort_channel_then_series(self):
+        """チャンネル別の仕分けを行い、終わったら続けて「作品ごとに仕分け」の画面を開く"""
+        self._sort_outcome = None
+        self._chain_series = False
+        self.sort_into_channel_folders()
+        outcome = getattr(self, "_sort_outcome", None)
+        if outcome == "started":
+            self._chain_series = True  # 仕分けが終わった時に、作品ごとの画面を開く
+        elif outcome == "empty":
+            self._open_series_sort()  # チャンネル別に移すものが無ければ、そのまま作品ごとへ
+
     def _open_series_sort(self):
         """作品ごとに仕分けるウインドウ(開いていれば前面に出す)"""
         if self.scanning or self.encoding_running:
@@ -6063,6 +6093,7 @@ class App(tk.Tk):
     ):
         """仕分け計画を確認ダイアログで見せ、了承されたら移動を始める"""
         root = get_sort_root()
+        self._sort_outcome = "empty" if not plan else "ask"
         if not plan:
             messagebox.showinfo(
                 "仕分け",
@@ -6088,7 +6119,9 @@ class App(tk.Tk):
             + "\n続行しますか?",
         )
         if not confirmed:
+            self._sort_outcome = "cancel"
             return
+        self._sort_outcome = "started"
 
         self.scanning = True  # 仕分け中は、スキャン・エンコードを開始させない
         self.sort_button.state(["disabled"])
@@ -6352,6 +6385,9 @@ class App(tk.Tk):
                         messagebox.showwarning("一部移動できませんでした", message + "\n\n" + text)
                     else:
                         messagebox.showinfo("仕分け完了", message)
+                    if getattr(self, "_chain_series", False):
+                        self._chain_series = False
+                        self.after(100, self._open_series_sort)
         except queue.Empty:
             pass
         if not finished:
