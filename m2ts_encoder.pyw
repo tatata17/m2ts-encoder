@@ -2762,7 +2762,7 @@ MENU_TIPS = {
     "二重にエンコードしたファイルを探して削除": "番組名・放送日・開始時刻が同じ変換済みファイルを組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。",
     "エンコード設定...": "エンコードの設定(プリセット)を作る・編集する画面を開きます。",
     "バッチファイル管理...": "エンコードに使うバッチファイルを登録・編集する画面を開きます。",
-    "いま画面のログを保存...": "画面下の「実行ログ」の内容を、txtファイルに保存します。",
+    "画面下の実行ログをtxtに保存...": "画面の下に表示されている「実行ログ」(スキャン・仕分け・エンコードの途中経過など)を、そのままtxtファイルに保存します。過去のエンコードのログは「ログを管理」で扱います。",
     "ログフォルダを開く": "エンコードごとのログが保存される「ログ」フォルダを、エクスプローラーで開きます。",
     "ログを管理": "ログを一覧にして、選んだものを1つのtxtや1件ずつに書き出す・内容を見る・削除する画面を開きます。",
     "ログの保存方法": "エンコードのログの保存のしかたを選びます(1つのtxtにまとめる / 1件ずつ別のtxt)。",
@@ -3037,7 +3037,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.8"
+APP_VERSION = "2026.11.04.9"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5537,7 +5537,7 @@ class App(tk.Tk):
         log_menu = tk.Menu(menubar, tearoff=0)
         log_menu.add_command(label="ログを管理(選んで書き出す・削除)...", command=self._open_log_manager)
         log_menu.add_command(label="ログフォルダを開く", command=self._open_log_folder)
-        log_menu.add_command(label="いま画面のログを保存...", command=self._save_log_as)
+        log_menu.add_command(label="画面下の実行ログをtxtに保存...", command=self._save_log_as)
         log_menu.add_separator()
         log_menu.add_command(label="エンコード診断結果を表示(全件)", command=self.show_all_diagnostics)
         log_menu.add_separator()
