@@ -2738,7 +2738,7 @@ class Tooltip:
 MENU_TIPS = {
     "ファイル": "再スキャンや、一覧のCSV保存、終了。",
     "ツール": "仕分け・縦横比の修正・二重エンコードの削除など、たまに使う機能。",
-    "設定": "エンコード設定とバッチファイルの管理。",
+    "設定": "エンコード設定とバッチファイルの管理、CUDAデコードの常時ON/OFF。",
     "ログ": "実行ログの保存・管理と、エンコード診断結果の表示。",
     "ヘルプ": "アップデートの確認、旧版のバックアップ管理、バージョン情報。",
     "再スキャン": "対象フォルダをもう一度読み直して、一覧を作り直します。",
@@ -2761,6 +2761,7 @@ MENU_TIPS = {
     "ログ(txt)を全削除": "「ログ」フォルダのtxt(まとめファイルも含む)を、すべて削除します。元に戻せません。",
     "エンコード診断結果を表示(全件)": "これまでのエンコードの診断結果(OK / 要確認)を、全件まとめて表示します。",
     "アップデートを確認": "新しい版があるか確認して、あれば更新します(今の版は自動でバックアップします)。",
+    "常にCUDAデコードで変換": "ONにすると、おまかせ・モノラル二か国語の分離など、どのエンコード設定でもCUDA(GPU)でデコードします。VLCでは出ないノイズがエンコード後に出る時用です。NVIDIA製GPUが必要です。バッチファイルを直接選んだ場合は対象外です。",
     "起動時に更新を確認する": "ONにすると、起動の数秒後に新しい版を確認して、あれば更新の案内を出します。",
     "旧版のバックアップを管理": "アップデートのたびに自動で作られる旧版のバックアップを、一覧・削除・その版に戻す、ができます。",
     "メニューの説明": "メニューの全項目と、その説明を、1つの画面で読めます(絞り込みもできます)。",
@@ -3010,7 +3011,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.1"
+APP_VERSION = "2026.11.04.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5453,6 +5454,11 @@ class App(tk.Tk):
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="エンコード設定...", command=lambda: self.open_settings_editor("preset"))
         settings_menu.add_command(label="バッチファイル管理...", command=lambda: self.open_settings_editor("bat"))
+        settings_menu.add_separator()
+        self.force_cuda_var = tk.BooleanVar(value=self.settings.get("force_cuda", "0") == "1")
+        settings_menu.add_checkbutton(
+            label="常にCUDAデコードで変換", variable=self.force_cuda_var, command=self._on_force_cuda_toggled
+        )
         menubar.add_cascade(label="設定", menu=settings_menu)
 
         log_menu = tk.Menu(menubar, tearoff=0)
@@ -7471,6 +7477,10 @@ class App(tk.Tk):
             messagebox.showerror("エラー", f"保存できませんでした: {e}")
 
     # ---- アップデート ----
+    def _on_force_cuda_toggled(self):
+        self.settings["force_cuda"] = "1" if self.force_cuda_var.get() else "0"
+        save_settings(self.settings)
+
     def _on_auto_update_toggled(self):
         self.settings["auto_update_check"] = "1" if self.auto_update_var.get() else "0"
         save_settings(self.settings)
@@ -8039,6 +8049,10 @@ class App(tk.Tk):
                     )
                     for note in notes:
                         self.encode_queue.put(("log", f"[自動判定] {note}"))
+            if self.settings.get("force_cuda", "0") == "1" and not normalize_encode_options(options)["cuda"]:
+                options = dict(options)
+                options["cuda"] = True
+                self.encode_queue.put(("log", "[設定] 「常にCUDAデコードで変換」がONのため、CUDAデコードで変換します"))
             fd, temp_bat_path = tempfile.mkstemp(suffix=".bat", prefix="m2ts_encoder_")
             os.close(fd)
             with io.open(temp_bat_path, "w", encoding="utf-8", newline="") as f:
