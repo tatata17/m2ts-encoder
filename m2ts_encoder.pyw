@@ -3011,7 +3011,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.2"
+APP_VERSION = "2026.11.04.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3551,6 +3551,43 @@ def suggest_series_name(program: str) -> str:
     return first if len(first) >= 2 else base
 
 
+def _title_words(program: str) -> List[str]:
+    return [w for w in re.split(r"[ 　]+", clean_program_title(program)) if w]
+
+
+def suggest_series_names_bulk(programs_by_key: Dict[str, str], min_ratio: float = 0.5) -> Dict[str, str]:
+    """
+    同じ放送局の番組名どうしを見比べて、作品名を決める(キー→作品名)。
+    番組名を空白で区切った「先頭からの単語の並び」を候補にし、最初の単語を共有する仲間のうち
+    min_ratio 以上(かつ2本以上)が共通して持っている、いちばん長い並びを作品名にする。
+    例: 「ブランディ アンド ウィスカーズ ＃25[二]」×10本 → 「ブランディ アンド ウィスカーズ」。
+    サブタイトル付きの回(「○○ 特別編」だけ2本など)は、細かく割れずに共通の短い名前へ寄る。
+    """
+    words = {k: _title_words(v) for k, v in programs_by_key.items()}
+    prefix_count: Dict[Tuple[str, ...], int] = {}
+    for w in words.values():
+        for n in range(1, len(w) + 1):
+            pk = tuple(series_key(x) for x in w[:n])
+            prefix_count[pk] = prefix_count.get(pk, 0) + 1
+    out: Dict[str, str] = {}
+    for k, w in words.items():
+        if not w:
+            out[k] = programs_by_key[k]
+            continue
+        # 先頭が1文字だけの場合(「あ」など)は、次の単語まで含めて最小の候補にする
+        start = 1
+        while start < len(w) and len(w[start - 1]) < 2:
+            start += 1
+        head = prefix_count[tuple(series_key(x) for x in w[:start])]
+        need = max(2, int(head * min_ratio + 0.999))
+        best = start
+        for n in range(start, len(w) + 1):
+            if prefix_count[tuple(series_key(x) for x in w[:n])] >= need:
+                best = n
+        out[k] = " ".join(w[:best]).strip(_SERIES_STRIP_CHARS) or programs_by_key[k]
+    return out
+
+
 def series_key(name: str) -> str:
     """作品名の比較用キー(全角/半角・大文字小文字・ひらがな/カタカナ・空白の違いを無視)"""
     folded = unicodedata.normalize("NFKC", name or "").casefold()
@@ -3617,9 +3654,15 @@ def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dic
     cands: Dict[str, str] = {}
     counts: Dict[Tuple[str, str], int] = {}
     ruled: set = set()
+    by_channel: Dict[str, Dict[str, str]] = {}
+    for it in items:
+        by_channel.setdefault(it["channel"], {})[it["path"]] = it["program"]
+    bulk: Dict[str, str] = {}
+    for progs in by_channel.values():
+        bulk.update(suggest_series_names_bulk(progs))
     for it in items:
         rule = apply_series_rules(it["program"], rules)
-        name = rule if rule else suggest_series_name(it["program"])
+        name = rule if rule else bulk.get(it["path"]) or suggest_series_name(it["program"])
         cands[it["path"]] = name
         if rule:
             ruled.add(it["path"])
@@ -5033,7 +5076,7 @@ class SeriesSortWindow(tk.Toplevel):
             "作品名の長さ",
             f"番組名の先頭から何文字を作品名にしますか?(選んだ{len(sel)}件すべてに使います)\n\n"
             f"例: 「{base}」\n  →  7 なら「{base[:7]}」(話数や[二]などは除いた名前の先頭から数えます)",
-            initialvalue=min(len(suggest_series_name(sel[0]["program"])), max(1, len(base))),
+            initialvalue=min(len(self.dest.get(sel[0]["path"]) or suggest_series_name(sel[0]["program"])), max(1, len(base))),
             minvalue=1, maxvalue=200, parent=self)
         if not n:
             return

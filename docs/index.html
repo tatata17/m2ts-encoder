@@ -319,6 +319,10 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">9</span>更新履歴</h2>
   <p>新しい順です。</p>
+  <h3>2026.11.04.3 <small style="color:var(--muted);font-weight:400">(2026-11-04)</small></h3>
+  <ul class="tight">
+    <li>作品ごとの仕分けで、作品名の自動提案を改善。以前は番組名の最初の空白までを作品名にしていたため、「ブランディ アンド ウィスカーズ」が「ブランディ」になるなど、空白を含む作品名が途中で切れていました。同じ放送局の他の番組名と見比べて、複数の回に共通する名前(空白を含めて)を作品名にします。</li>
+  </ul>
   <h3>2026.11.04.2 <small style="color:var(--muted);font-weight:400">(2026-11-04)</small></h3>
   <ul class="tight">
     <li>設定 →「常にCUDAデコードで変換」を追加。ONにすると、おまかせやモノラル二か国語の分離など、どのエンコード設定でもCUDA(GPU)でデコードします。VLCでは出ないノイズがエンコード後に出るファイルを、設定を切り替えるだけで二か国語の分離なども含めて変換できます(NVIDIA製GPUが必要。既定はOFF)。</li>
