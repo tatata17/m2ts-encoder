@@ -2762,11 +2762,12 @@ MENU_TIPS = {
     "二重にエンコードしたファイルを探して削除": "番組名・放送日・開始時刻が同じ変換済みファイルを組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。",
     "エンコード設定...": "エンコードの設定(プリセット)を作る・編集する画面を開きます。",
     "バッチファイル管理...": "エンコードに使うバッチファイルを登録・編集する画面を開きます。",
-    "ログを保存...": "画面下の「実行ログ」の内容を、txtファイルに保存します。",
+    "いま画面のログを保存...": "画面下の「実行ログ」の内容を、txtファイルに保存します。",
     "ログフォルダを開く": "エンコードごとのログが保存される「ログ」フォルダを、エクスプローラーで開きます。",
     "ログを管理": "ログを一覧にして、選んだものを1つのtxtや1件ずつに書き出す・内容を見る・削除する画面を開きます。",
-    "保存方法: 1つのtxtにまとめて保存": "エンコードのログを、まとめ_実行ログ.txt に1件ずつ追記して保存します(ファイルが増えません)。",
-    "保存方法: 1件ずつ別のtxtで保存": "エンコードのログを、1件ごとに別のtxtファイルにして保存します(従来の方法)。",
+    "ログの保存方法": "エンコードのログの保存のしかたを選びます(1つのtxtにまとめる / 1件ずつ別のtxt)。",
+    "1つのtxtにまとめて保存": "エンコードのログを、まとめ_実行ログ.txt に1件ずつ追記して保存します(ファイルが増えません)。",
+    "1件ずつ別のtxtで保存": "エンコードのログを、1件ごとに別のtxtファイルにして保存します(従来の方法)。",
     "ログフォルダのtxtを1つにまとめる": "「ログ」フォルダにある個別のtxtを、見出し付きの1つのtxtにまとめて保存します。元のログは消しません。",
     "ログ(txt)を全削除": "「ログ」フォルダのtxt(まとめファイルも含む)を、すべて削除します。元に戻せません。",
     "エンコード診断結果を表示(全件)": "これまでのエンコードの診断結果(OK / 要確認)を、全件まとめて表示します。",
@@ -3036,7 +3037,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.7"
+APP_VERSION = "2026.11.04.8"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5534,18 +5535,23 @@ class App(tk.Tk):
         menubar.add_cascade(label="設定", menu=settings_menu)
 
         log_menu = tk.Menu(menubar, tearoff=0)
-        log_menu.add_command(label="ログを保存...", command=self._save_log_as)
-        log_menu.add_command(label="ログフォルダを開く", command=self._open_log_folder)
         log_menu.add_command(label="ログを管理(選んで書き出す・削除)...", command=self._open_log_manager)
+        log_menu.add_command(label="ログフォルダを開く", command=self._open_log_folder)
+        log_menu.add_command(label="いま画面のログを保存...", command=self._save_log_as)
+        log_menu.add_separator()
+        log_menu.add_command(label="エンコード診断結果を表示(全件)", command=self.show_all_diagnostics)
+        log_menu.add_separator()
         self.log_mode_var = tk.StringVar(value=get_log_mode())
-        log_menu.add_radiobutton(label="保存方法: 1つのtxtにまとめて保存(おすすめ)", variable=self.log_mode_var,
-                                 value="single", command=self._on_log_mode_changed)
-        log_menu.add_radiobutton(label="保存方法: 1件ずつ別のtxtで保存(従来)", variable=self.log_mode_var,
-                                 value="each", command=self._on_log_mode_changed)
-        log_menu.add_command(label="ログフォルダのtxtを1つにまとめる...", command=self._merge_log_files)
+        save_menu = tk.Menu(log_menu, tearoff=0)
+        save_menu.add_radiobutton(label="1つのtxtにまとめて保存(おすすめ)", variable=self.log_mode_var,
+                                  value="single", command=self._on_log_mode_changed)
+        save_menu.add_radiobutton(label="1件ずつ別のtxtで保存(従来)", variable=self.log_mode_var,
+                                  value="each", command=self._on_log_mode_changed)
+        save_menu.add_separator()
+        save_menu.add_command(label="ログフォルダのtxtを1つにまとめる...", command=self._merge_log_files)
+        log_menu.add_cascade(label="ログの保存方法", menu=save_menu)
         log_menu.add_separator()
         log_menu.add_command(label="ログ(txt)を全削除...", command=self._delete_all_logs)
-        log_menu.add_command(label="エンコード診断結果を表示(全件)", command=self.show_all_diagnostics)
         menubar.add_cascade(label="ログ", menu=log_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
