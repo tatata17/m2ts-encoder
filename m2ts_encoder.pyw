@@ -882,7 +882,7 @@ _BOUNDARY_OK_PATTERNS = [
     re.compile(r"invalid dts:.*replacing by guess", re.IGNORECASE),
 ]
 
-_HEAD_SECONDS = 5.0            # 録画の先頭とみなす秒数(この範囲の映像/音声エラーは無視)
+_HEAD_SECONDS = 4.0            # 録画の先頭とみなす秒数(この範囲の映像/音声エラーは無視)
 _TAIL_SECONDS = 20.0           # 録画の末尾とみなす秒数(終端の切れ目で出るエラーは無視)
 _TRUNCATED_SECONDS = 60.0      # 出力の長さが元よりこの秒数以上短ければ「途中で終わった」と判断
 _DUP_IGNORE_HEAD_SECONDS = 2.0  # 録画の先頭この秒数以内のdupの増加は、開始直後の正常な現象なので無視する
@@ -3019,7 +3019,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.5"
+APP_VERSION = "2026.11.04.6"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
