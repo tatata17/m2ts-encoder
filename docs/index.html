@@ -41,7 +41,18 @@ header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--p
   padding:8px 16px;border-radius:999px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px;line-height:1.4}
 .btn.ghost{background:transparent;color:var(--accent)}
 .btn:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
-.icon-btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;width:38px;height:38px;cursor:pointer;font-size:16px}
+.icon-btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;height:38px;padding:0 14px;cursor:pointer;font-size:14px;white-space:nowrap}
+.logo{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:700 13px/1 "Cascadia Mono",Consolas,monospace;flex:none}
+.toc-btn{display:none;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:10px;height:38px;padding:0 14px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
+nav.toc .tn{display:inline-block;min-width:1.7em;color:var(--muted);font:12.5px/1 "Cascadia Mono",Consolas,monospace}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:12px 0;box-shadow:var(--shadow)}
+.card>summary{cursor:pointer;list-style:none}
+.card>summary::-webkit-details-marker{display:none}
+.card>summary::before{content:"▸";display:inline-block;width:1.2em;color:var(--muted)}
+.card[open]>summary::before{content:"▾"}
+.card .d{font-weight:700;font-size:17px}
+.card .vr{color:var(--muted);font-size:13.5px;margin-left:8px}
+.card ul{margin:8px 0 2px}
 .wrap{max-width:1120px;margin:0 auto;padding:0 16px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
 nav.toc{position:sticky;top:72px;align-self:start;max-height:calc(100vh - 90px);overflow:auto;padding:28px 0}
 nav.toc ol{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
@@ -94,11 +105,20 @@ ul.tight li{margin:4px 0}
 .callouts b{color:var(--accent)}
 footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var(--muted);font-size:14px}
 @media (max-width:820px){
+  .logo{display:none}
   .wrap{grid-template-columns:1fr;gap:0}
-  nav.toc{position:static;max-height:none;padding:14px 0 0}
-  nav.toc ol{display:flex;flex-wrap:wrap;gap:6px;border:none}
-  nav.toc a{border:1px solid var(--line);border-radius:999px;margin:0;padding:3px 12px;background:var(--panel)}
-  nav.toc a.on{border-color:var(--accent)}
+  .toc-btn{display:inline-flex;align-items:center}
+  .top-in{gap:8px;padding:8px 12px}
+  .btn.ghost{padding:6px 12px;font-size:14px}
+  nav.toc{display:none;position:fixed;top:58px;left:10px;right:10px;max-height:72vh;overflow:auto;padding:10px;z-index:30;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+  nav.toc.open{display:block}
+  .brand{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .brand small{display:none}
+  .icon-btn{padding:0 10px;font-size:13px}
+  nav.toc ol{border:none}
+  nav.toc a{border:none;border-radius:8px;margin:0;padding:9px 12px;font-size:16px}
+  nav.toc a.on{background:var(--accent-soft)}
   .hero{padding:20px 18px}
   .brand small{display:none}
   .mock .list div{grid-template-columns:1fr 2fr 1.2fr}
@@ -110,27 +130,29 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <body>
 <header class="top">
   <div class="top-in">
+    <button class="toc-btn" id="tocBtn" aria-expanded="false" aria-controls="toc">目次</button>
+    <span class="logo" aria-hidden="true">m2</span>
     <div class="brand">m2ts エンコーダー<small>使い方ガイド</small></div>
     <div class="spacer"></div>
     <a class="btn ghost" href="https://github.com/tatata17/m2ts-encoder">GitHub</a>
-    <button class="icon-btn" id="theme" aria-label="ライト/ダークを切り替え" title="ライト/ダークを切り替え">◐</button>
+    <button class="icon-btn" id="theme" aria-label="ライト/ダークを切り替え" title="ライト/ダークを切り替え">暗い表示</button>
   </div>
 </header>
 
 <div class="wrap">
-<nav class="toc" aria-label="目次">
+<nav class="toc" id="toc" aria-label="目次">
   <ol>
-    <li><a href="#about">はじめに</a></li>
-    <li><a href="#install">用意するもの・起動</a></li>
-    <li><a href="#basic">基本の流れ</a></li>
-    <li><a href="#presets">エンコード設定</a></li>
-    <li><a href="#diag">診断とノイズ検査</a></li>
-    <li><a href="#sort">チャンネル別に仕分け</a></li>
-    <li><a href="#more">その他の機能</a></li>
-    <li><a href="#update">アップデート</a></li>
-    <li><a href="#trouble">困ったとき</a></li>
-    <li><a href="#files">ファイルの置き場所</a></li>
-    <li><a href="#history">更新履歴</a></li>
+    <li><a href="#about"><span class="tn"></span>はじめに</a></li>
+    <li><a href="#install"><span class="tn">1</span>用意するもの・起動</a></li>
+    <li><a href="#basic"><span class="tn">2</span>基本の流れ</a></li>
+    <li><a href="#presets"><span class="tn">3</span>エンコード設定</a></li>
+    <li><a href="#diag"><span class="tn">4</span>診断とノイズ検査</a></li>
+    <li><a href="#sort"><span class="tn">5</span>チャンネル別に仕分け</a></li>
+    <li><a href="#more"><span class="tn">6</span>その他の機能</a></li>
+    <li><a href="#update"><span class="tn">7</span>アップデート</a></li>
+    <li><a href="#trouble"><span class="tn">8</span>困ったとき</a></li>
+    <li><a href="#files"><span class="tn">9</span>ファイルの置き場所</a></li>
+    <li><a href="#history"><span class="tn">10</span>更新履歴</a></li>
   </ol>
 </nav>
 
@@ -156,13 +178,13 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="install">
   <h2><span class="n">1</span>用意するもの・起動のしかた</h2>
   <div class="scroll"><table>
-    <tr><th>もの</th><th>説明</th></tr>
-    <tr><td>Windows 10 / 11</td><td></td></tr>
-    <tr><td>Python 3</td><td>3.9以上を推奨。インストーラーで <b>「Add python.exe to PATH」</b> と、<code>.pyw</code> を関連付ける <b>「py launcher」</b> にチェックを入れてください。</td></tr>
-    <tr><td>ffmpeg / ffprobe</td><td>アプリと同じフォルダに置くか、PATHを通します。<code>ffprobe</code> は「おまかせ」の自動判定に使います。<br>入手先: <a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の Windows 用ビルド</a>。<b>「full」版</b>を選んでください(ARIB字幕を入れるのに必要な部品は、full版にだけ入っています)。zipの中の <code>bin</code> フォルダにある <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> を使います。</td></tr>
-    <tr><td>rplsinfo.exe</td><td>同じフォルダに置くか、PATHを通します。番組名・チャンネル・放送日の取得に使います。<br>入手先: <a href="https://github.com/tsukumijima/rplsinfo" target="_blank" rel="noopener">tsukumijima/rplsinfo</a> の Releases にあるzipの中の <code>rplsinfo.exe</code>。</td></tr>
-    <tr><td>NVIDIAのGPU <small>(推奨)</small></td><td>既定のエンコード設定は <code>hevc_nvenc</code>(NVIDIAのハードウェアエンコード)を使います。<b>無くても使えます。</b>メニュー「設定」→「エンコーダー」で、Intel(QSV)・AMD(AMF)・CPU(libx265)に切り替えられます。「自動」なら、使えるものを自動で選びます(CPUは遅いです)。</td></tr>
-    <tr><td>tkinterdnd2 <small>(任意)</small></td><td>「縦横比を直す」にファイルをドラッグ&amp;ドロップしたい場合だけ、コマンドプロンプトで <code>pip install tkinterdnd2</code> を実行します。入れなくても、ほかの機能はすべて使えます。</td></tr>
+    <tr><th>もの</th><th>用途</th><th>入手先・備考</th></tr>
+    <tr><td>Windows 10 / 11</td><td>動作環境</td><td></td></tr>
+    <tr><td>Python 3</td><td>アプリ本体を動かす</td><td>3.9以上を推奨。インストーラーで <b>「Add python.exe to PATH」</b> と、<code>.pyw</code> を関連付ける <b>「py launcher」</b> にチェックを入れてください。</td></tr>
+    <tr><td>ffmpeg / ffprobe</td><td>エンコード本体。<code>ffprobe</code> は「おまかせ」の自動判定に使う</td><td><a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の Windows 用ビルド</a>。<b>「full」版</b>を選んでください(ARIB字幕に必要な部品は、full版にだけ入っています)。zipの中の <code>bin</code> フォルダにある <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> を、アプリと同じフォルダに置くか、PATHを通します。</td></tr>
+    <tr><td>rplsinfo.exe</td><td>番組名・チャンネル・放送日の取得</td><td><a href="https://github.com/tsukumijima/rplsinfo" target="_blank" rel="noopener">tsukumijima/rplsinfo</a> の Releases にあるzipの中の <code>rplsinfo.exe</code>。同じフォルダに置くか、PATHを通します。</td></tr>
+    <tr><td>NVIDIAのGPU <small>(推奨)</small></td><td>高速なエンコード(<code>hevc_nvenc</code>)、CUDAデコード、ノイズ検査</td><td><b>無くても使えます。</b>メニュー「設定」→「エンコーダー」で、Intel(QSV)・AMD(AMF)・CPU(libx265)に切り替えられます。「自動」なら、使えるものを自動で選びます(CPUは遅いです)。</td></tr>
+    <tr><td>tkinterdnd2 <small>(任意)</small></td><td>「縦横比を直す」へのドラッグ&amp;ドロップ</td><td>使いたい場合だけ、コマンドプロンプトで <code>pip install tkinterdnd2</code> を実行します。入れなくても、ほかの機能はすべて使えます。</td></tr>
   </table></div>
   <p class="note"><b>入れるもの・入れないもの:</b> 上の表のほかに、Pythonの追加ライブラリ(<code>pip install</code>)は必要ありません(<code>tkinterdnd2</code> は任意)。Pythonのインストーラーでは「tcl/tk」のチェックを外さないでください(画面の表示に使います)。</p>
   <p class="note">「PATHを通す」が分からない場合は、ffmpeg と rplsinfo を <code>m2ts_encoder.pyw</code> と<b>同じフォルダに置く</b>だけで動きます。PATHの設定のしかたは、<a href="https://qiita.com/shuhey/items/7ee0d25f14a997c9e285" target="_blank" rel="noopener">こちらの解説(Qiita)</a>が参考になります。</p>
@@ -350,6 +372,15 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 
 <section id="files">
   <h2><span class="n">9</span>ファイルの置き場所</h2>
+  <h3>GitHubのリポジトリ</h3>
+  <div class="scroll"><table>
+    <tr><th>ファイル</th><th>中身</th></tr>
+    <tr><td><code>m2ts_encoder.pyw</code></td><td>アプリ本体(版番号は <code>APP_VERSION</code>)</td></tr>
+    <tr><td><code>version.json</code></td><td>最新の版番号と、更新の案内に出す内容(アプリの更新確認が読みます)</td></tr>
+    <tr><td><code>README.md</code> / <code>CHANGELOG.md</code></td><td>説明と、更新履歴</td></tr>
+    <tr><td><code>docs/index.html</code></td><td>このページ</td></tr>
+  </table></div>
+  <h3>アプリが作るファイル</h3>
   <p>アプリが作るファイルの場所です。どれも、消しても録画やエンコード済みファイルには影響しません(設定を消すと、設定が初期状態に戻ります)。</p>
   <div class="scroll"><table>
     <tr><th>場所</th><th>中身</th></tr>
@@ -363,14 +394,16 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <h3>2026-11-06 <small style="color:var(--muted);font-weight:400">(2026.11.06.1〜2026.11.06.2・ドキュメント)</small></h3>
+  <div class="card"><span class="d">2026-11-06</span><span class="vr">2026.11.06.1〜2026.11.06.2・ドキュメント</span>
   <ul class="tight">
     <li>NVIDIAのGPUが無くても使えるようにしました。メニュー「設定」→「エンコーダー」で、NVIDIA(hevc_nvenc)・Intel(hevc_qsv)・AMD(hevc_amf)・CPU(libx265)を選べます。既定の「自動」は、起動時に短い映像を実際にエンコードして調べ、使える最初のものを選びます。「使えるエンコーダーを調べる」で結果を見られます。画質の値(QP)は各エンコーダーの目安に換算します。CUDAデコードとノイズ検査はNVIDIA専用で、NVIDIA以外では使いません。バッチファイルは、書かれているエンコーダーのまま実行します。(Intel・AMDは、実機での確認がまだできていません)</li>
     <li>一覧の右クリックに、「エンコード後のファイルを再生」「エンコード後のファイルの場所を開く」を追加しました(仕分け済みのファイルも見つけます。まだ変換していない行では、グレーで選べません)。これまでの「ファイルの場所を開く」「再生」は、「元のファイルの場所を開く」「元のファイルを再生」に改名しました。</li>
     <li>サイトとREADMEの「困ったとき」の、同名のmkvが残っているときの説明を、分かりやすく書き直しました。</li>
     <li>サイトとREADMEを、実際の動きと突き合わせて直しました(メニューには説明が出ない、「仕分け」フォルダの場所、ツール → 仕分け のメニュー、ノイズ検査はNVIDIA専用、更新の案内の出し方、READMEに無かった機能の説明の追加)。</li>
+    <li>使い方ページを見やすく改善(スマホの「目次」ボタン、番号付き目次、必要なものの表、更新履歴のカード表示など)</li>
   </ul>
-  <details><summary><b>2026-11-05 <small style="color:var(--muted);font-weight:400">(2026.11.05.1〜2026.11.05.2・ドキュメント)</small></b></summary>
+  </div>
+  <details class="card"><summary><span class="d">2026-11-05</span><span class="vr">2026.11.05.1〜2026.11.05.2・ドキュメント</span></summary>
   <ul class="tight">
     <li>VLCが無くても使えるようにしました。メニュー「設定」→「再生ソフトを選ぶ」で、右クリックの「再生」や診断の時刻からの再生に使うソフトを選べます(VLC・mpv・MPC-HC・PotPlayerは時刻を指定して再生、他のソフトはファイルを開くだけ)。未指定のときは、VLCが入っていればVLC、無ければWindowsの既定のアプリで開きます。右クリックの「VLCで再生」は「再生」に改名しました。</li>
     <li>更新の案内の「更新内容」は、ユーザーに関わる大きな変更のときだけ書くようにしました。細かい修正の版では、「細かい修正です。詳しくは更新履歴を見てください」と表示します。</li>
@@ -378,7 +411,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>ffmpeg(gyan.dev の full 版)と rplsinfo の入手先、「PATHを通す」の解説リンクを、サイトとREADMEの「用意するもの」に追記しました。</li>
   </ul>
   </details>
-  <details><summary><b>2026-11-04 <small style="color:var(--muted);font-weight:400">(2026.11.04.1〜2026.11.04.11)</small></b></summary>
+  <details class="card"><summary><span class="d">2026-11-04</span><span class="vr">2026.11.04.1〜2026.11.04.11</span></summary>
   <ul class="tight">
     <li>組み込みのエンコード設定とバッチの名前から、特定のサービス名を外しました(「mp4・モノラル二か国語・yadif」など)。旧い名前で登録されていたバッチは、自動で新しい名前に置き換わります。</li>
     <li>起動時の更新の案内を、スキャンの前に出すようにしました。起動してすぐ更新を確認し、新しい版があれば先に案内を出して、答えたあとでスキャンを始めます(更新の確認に3秒以上かかる場合は待たずにスキャンを始め、終わってから案内を出します)。</li>
@@ -389,7 +422,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>読み取るフォルダ(対象フォルダ)を、画面上の「フォルダを変更...」で選べるようにしました。選んだフォルダは次回も使われ、「このアプリのフォルダに戻す」で既定(.pywがあるフォルダ)に戻せます。フォルダを.pywのアイコンにドラッグ&amp;ドロップして起動すると、そのフォルダを(記憶せずに)使います。「仕分け」フォルダは、対象フォルダの下に作られます。</li>
   </ul>
   </details>
-  <details><summary><b>2026-10-30 <small style="color:var(--muted);font-weight:400">(2026.10.30.2〜2026.10.30.12)</small></b></summary>
+  <details class="card"><summary><span class="d">2026-10-30</span><span class="vr">2026.10.30.2〜2026.10.30.12</span></summary>
   <ul class="tight">
     <li>ヘルプ →「メニューの説明」を追加。メニューの全項目と説明を、1つの画面で読めます(絞り込みつき)。</li>
     <li>ログの保存方法を選べるようにしました(ログ →「ログの保存方法」)。既定は「1つのtxtにまとめて保存」で、ログ/まとめ_実行ログ.txt に1件ずつ追記します(エンコード中は作業用の一時txtに書き、終わったら追記します。途中でアプリが終わっても、次の起動で追記されます)。従来の「1件ずつ別のtxt」にも戻せます。</li>
@@ -399,7 +432,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>起動時の更新確認で、新しい版があれば、更新の案内(更新内容つき)を自動で表示するようにしました(これまではログに出るだけでした)。エンコード中は邪魔をせず、ログとメニュー表示だけにします。スキャン中は、スキャンが終わってから案内を出します。「ヘルプ → 起動時に更新を確認する」のチェックを外せば出なくなります。</li>
   </ul>
   </details>
-  <details><summary><b>2026-10-29 <small style="color:var(--muted);font-weight:400">(2026.10.29.2〜2026.10.29.8)</small></b></summary>
+  <details class="card"><summary><span class="d">2026-10-29</span><span class="vr">2026.10.29.2〜2026.10.29.8</span></summary>
   <ul class="tight">
     <li>ツール →「二重にエンコードしたファイルを探して削除」を追加。変換済みのmkv/mp4から、番組名・放送日・開始時刻が同じものが2本以上あるものを組にして並べ、1本ずつ「残す/削除」を決めてまとめて削除できます(対のcsvも一緒に削除)。番組名・放送日・開始時刻が同じものを組にします。最初は各組で1本だけ残す提案で、長さが違う組は別の放送かもしれないので全部残します。</li>
     <li>コピーした音声が映像より先に書き込まれ、シークすると終盤が無音になる問題を修正。映像の処理が遅れる区間(CM明けのミニ番組など)で、音声だけが映像よりずっと手前に置かれていました。出力の並べ替えを待つ時間を10秒から300秒に延ばしました。すでにできたMKVは、ffmpeg -i 入力.mkv -map 0 -c copy -max_interleave_delta 0 出力.mkv で再エンコードなしに直せます。</li>
@@ -410,14 +443,14 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>2本目の音声が途中から始まるとき、「解説放送」と間違えないように、始まってからの長さで1本目と比べるようにしました。</li>
   </ul>
   </details>
-  <details><summary><b>2026-10-28 <small style="color:var(--muted);font-weight:400">(2026.10.28.1〜2026.10.28.2)</small></b></summary>
+  <details class="card"><summary><span class="d">2026-10-28</span><span class="vr">2026.10.28.1〜2026.10.28.2</span></summary>
   <ul class="tight">
     <li>同梱の旧バッチで、番組名に「&amp;」などが入っていると、後ろの文字がコマンドとして実行されてしまう問題を修正(番組名を引用符で囲むようにしました)。</li>
     <li>ツール →「作品ごとに仕分け」を追加。仕分け済みの放送局フォルダの中を、作品名のフォルダ(仕分け/放送局名/作品名/)に分けます。別ウインドウで、ファイルごとに移動先を選べます(作品名の長さ指定・名前の手入力・動かさない・放送局の直下へ)。並べ替えと検索、手で決めた名前の記憶、直前1回の「元に戻す」に対応。</li>
     <li>作品フォルダの中のファイルも、変換済みの判定・「エンコード済み」タブ・チャンネル別の仕分けで、仕分け済みとして扱われるようにしました。</li>
   </ul>
   </details>
-  <details><summary><b>2026-10-25 <small style="color:var(--muted);font-weight:400">(2026.10.25.1〜2026.10.25.3)</small></b></summary>
+  <details class="card"><summary><span class="d">2026-10-25</span><span class="vr">2026.10.25.1〜2026.10.25.3</span></summary>
   <ul class="tight">
     <li>ツール →「縦横比を直す」を追加。変換済みmkv/mp4の4:3/16:9表示を、再エンコードなしで書き換えられます(一覧から選ぶ・ファイル追加・ドラッグ&amp;ドロップ)。</li>
     <li>4:3のSD映像(720x480など)が横に伸びる問題を修正。16:9を強制するのはHD映像とCATVの60pだけにしました。</li>
@@ -425,7 +458,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>診断で、この種の失敗を「失敗」と表示するようにしました。</li>
   </ul>
   </details>
-  <details><summary><b>2026-10-23 <small style="color:var(--muted);font-weight:400">(2026.10.23.1〜2026.10.23.2)</small></b></summary>
+  <details class="card"><summary><span class="d">2026-10-23</span><span class="vr">2026.10.23.1〜2026.10.23.2</span></summary>
   <ul class="tight">
     <li>一覧が空のとき、「サブフォルダも検索する」を案内するようにしました(設定は記憶されます)。</li>
     <li>README・ガイドサイトに説明を追加。</li>
@@ -449,7 +482,20 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     var dark=root.getAttribute("data-theme")==="dark"||(!root.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme: dark)").matches);
     var next=dark?"light":"dark";root.setAttribute("data-theme",next);
     try{localStorage.setItem("theme",next);}catch(e){}
+    setThemeLabel();
   });
+  function setThemeLabel(){
+    var dark=root.getAttribute("data-theme")==="dark"||(!root.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme: dark)").matches);
+    document.getElementById("theme").textContent=dark?"明るい表示":"暗い表示";
+  }
+  setThemeLabel();
+  // スマホの目次(ボタンで開閉)
+  var toc=document.getElementById("toc"),tocBtn=document.getElementById("tocBtn");
+  function closeToc(){toc.classList.remove("open");tocBtn.setAttribute("aria-expanded","false");}
+  tocBtn.addEventListener("click",function(ev){ev.stopPropagation();var o=toc.classList.toggle("open");tocBtn.setAttribute("aria-expanded",o?"true":"false");});
+  toc.addEventListener("click",function(ev){if(ev.target.closest("a"))closeToc();});
+  document.addEventListener("click",function(ev){if(!toc.contains(ev.target))closeToc();});
+  document.addEventListener("keydown",function(ev){if(ev.key==="Escape")closeToc();});
   // 目次のハイライト
   var links=[].slice.call(document.querySelectorAll("nav.toc a"));
   var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
