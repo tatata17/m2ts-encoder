@@ -2067,7 +2067,7 @@ GOTO REPEAT
 copy *.log matome.log
 pause
 """,
-    "m2ts→mp4(モノラル二か国語)_CNCATV.bat": """echo on
+    "m2ts→mp4(モノラル二か国語)_CATV.bat": """echo on
 
 :REPEAT
 if not "%RPLSINFO_SOURCE%"=="" (set "INFOSRC=%RPLSINFO_SOURCE%") else (set "INFOSRC=%1")
@@ -2339,7 +2339,7 @@ BUILTIN_PRESETS: List[Tuple[str, Dict[str, object]]] = [
     ("mkv・CATV・字幕入り・bwdif(オールマイティ)",
      {"container": "mkv", "catv": True, "subs": True, "deint": "bwdif", "auto": True}),
     ("mp4・CATV", {"container": "mp4", "catv": True}),
-    ("mp4・モノラル二か国語(CNCATV)", {"container": "mp4", "audio": "mono", "hvc1": True}),
+    ("mp4・CATV・モノラル二か国語", {"container": "mp4", "audio": "mono", "hvc1": True}),
     ("mp4・モノラル二か国語・yadif",
      {"container": "mp4", "audio": "mono", "hvc1": True, "deint": "yadif"}),
     ("mp4・ステレオ二か国語・bwdif", {"container": "mp4", "hvc1": True, "deint": "bwdif", "aspect": False}),
@@ -3137,7 +3137,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.06.2"
+APP_VERSION = "2026.11.06.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
