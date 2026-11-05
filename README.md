@@ -24,6 +24,8 @@ Python(tkinter)で動く **`m2ts_encoder.pyw` 1つだけ** で動作します(�
 | rplsinfo.exe | 同じフォルダに置くか、PATHを通す(番組名・チャンネル・放送日の取得に使います)。入手先: [tsukumijima/rplsinfo](https://github.com/tsukumijima/rplsinfo) の Releases にあるzipの中の `rplsinfo.exe` |
 | NVIDIAのGPU | 既定のエンコード設定は `hevc_nvenc`(NVIDIAのハードウェアエンコード)を使います |
 
+「PATHを通す」が分からない場合は、ffmpeg と rplsinfo を `m2ts_encoder.pyw` と**同じフォルダに置く**だけで動きます。PATHの設定のしかたは、[こちらの解説(Qiita)](https://qiita.com/shuhey/items/7ee0d25f14a997c9e285)が参考になります。
+
 ## 2. 起動のしかた
 
 1. `m2ts_encoder.pyw` をダウンロードして、好きなフォルダに置く

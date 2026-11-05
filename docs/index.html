@@ -161,6 +161,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td>rplsinfo.exe</td><td>同じフォルダに置くか、PATHを通します。番組名・チャンネル・放送日の取得に使います。<br>入手先: <a href="https://github.com/tsukumijima/rplsinfo" target="_blank" rel="noopener">tsukumijima/rplsinfo</a> の Releases にあるzipの中の <code>rplsinfo.exe</code>。</td></tr>
     <tr><td>NVIDIAのGPU</td><td>既定のエンコード設定は <code>hevc_nvenc</code>(NVIDIAのハードウェアエンコード)を使います。</td></tr>
   </table></div>
+  <p class="note">「PATHを通す」が分からない場合は、ffmpeg と rplsinfo を <code>m2ts_encoder.pyw</code> と<b>同じフォルダに置く</b>だけで動きます。PATHの設定のしかたは、<a href="https://qiita.com/shuhey/items/7ee0d25f14a997c9e285" target="_blank" rel="noopener">こちらの解説(Qiita)</a>が参考になります。</p>
   <ol class="steps">
     <li><code>m2ts_encoder.pyw</code> をダウンロードして、好きなフォルダ(録画ファイルのあるフォルダでも可)に置く</li>
     <li>同じフォルダに <code>rplsinfo.exe</code>(と、必要なら <code>ffmpeg.exe</code> / <code>ffprobe.exe</code>)を置く</li>
@@ -321,7 +322,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
   <h3>2026-11-05 <small style="color:var(--muted);font-weight:400">(ドキュメントのみ)</small></h3>
   <ul class="tight">
-    <li>サイトとREADMEの「用意するもの」に、ffmpeg(gyan.dev の full 版)と rplsinfo の入手先を追記しました。</li>
+    <li>サイトとREADMEの「用意するもの」に、ffmpeg(gyan.dev の full 版)と rplsinfo の入手先、「PATHを通す」の解説リンクを追記しました。</li>
   </ul>
   <details><summary><b>2026-11-04 <small style="color:var(--muted);font-weight:400">(2026.11.04.1〜2026.11.04.11)</small></b></summary>
   <ul class="tight">
