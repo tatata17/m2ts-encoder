@@ -328,7 +328,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入手先は、上の「用意するもの」を見てください。</td></tr>
     <tr><td>プレーヤー(VLCなど)では出ないノイズが、エンコードした動画に出る</td><td>メニュー「設定」→「常にCUDAデコードで変換」をONにして、もう一度エンコードします(NVIDIAのGPUが必要)。</td></tr>
     <tr><td>更新の案内が出ない</td><td>メニュー「ヘルプ」→「起動時に更新を確認する」がONか確認します。エンコード中は案内を出さず、ログに表示するだけです。</td></tr>
-    <tr><td>同名の <code>.mkv</code> が残っていてエンコードに失敗する</td><td>失敗や中断で残った <code>番組.m2ts.mkv</code> は、次のエンコード開始時に自動で削除されます</td></tr>
+    <tr><td>ログに「<code>◯◯.mkv を削除できませんでした</code>」と出て、エンコードに失敗する</td><td>そのmkvを開いているソフト(再生ソフトなど)を閉じて、もう一度エンコードします。通常は、前回の失敗や中断で残った <code>番組.m2ts.mkv</code> は、エンコード開始時に自動で削除されます。</td></tr>
   </table></div>
 </section>
 
@@ -347,9 +347,10 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <h3>2026-11-06 <small style="color:var(--muted);font-weight:400">(2026.11.06.1)</small></h3>
+  <h3>2026-11-06 <small style="color:var(--muted);font-weight:400">(2026.11.06.1・ドキュメント)</small></h3>
   <ul class="tight">
     <li>一覧の右クリックに、「エンコード後のファイルを再生」「エンコード後のファイルの場所を開く」を追加しました(仕分け済みのファイルも見つけます。まだ変換していない行では、グレーで選べません)。これまでの「ファイルの場所を開く」「再生」は、「元のファイルの場所を開く」「元のファイルを再生」に改名しました。</li>
+    <li>サイトとREADMEの「困ったとき」の、同名のmkvが残っているときの説明を、分かりやすく書き直しました。</li>
   </ul>
   <details><summary><b>2026-11-05 <small style="color:var(--muted);font-weight:400">(2026.11.05.1〜2026.11.05.2・ドキュメント)</small></b></summary>
   <ul class="tight">
