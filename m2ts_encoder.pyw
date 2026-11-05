@@ -53,8 +53,9 @@ rplsinfo.exe で「元ファイル名」「録画番組名」を取得して一�
 
 ■ 右クリックメニューについて
     一覧の各行を右クリックすると、以下の操作ができます。
-    - ファイルの場所を開く: エクスプローラーでそのファイルを選択した状態で開く
-    - 再生: 再生ソフトで開く(メニュー「設定」→「再生ソフトを選ぶ」で選べます。未指定ならVLC、
+    - 元のファイルの場所を開く: エクスプローラーでそのファイルを選択した状態で開く
+    - エンコード後のファイルを再生 / 場所を開く: 変換済みのmkv/mp4(仕分け済みのものも含む)
+    - 元のファイルを再生: 再生ソフトで開く(メニュー「設定」→「再生ソフトを選ぶ」で選べます。未指定ならVLC、
       それも無ければWindowsの既定のアプリで開きます)
     - rplsから番組情報を再取得(BDAV用): BDAV形式(.../<番号>/STREAM/xxxxx.m2ts と
       .../<番号>/PLAYLIST/xxxxx.rpls という構成)で、m2ts単体からはタイトルが
@@ -3059,7 +3060,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.05.2"
+APP_VERSION = "2026.11.06.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6542,7 +6543,7 @@ class App(tk.Tk):
         self.status_var.set(f"チャンネル '{channel}' の{len(matched_iids)}件を選択しました。{suffix}")
 
     # ------------------------------------------------------------------
-    # 右クリックメニュー (ファイルの場所を開く / 再生 / rplsから情報再取得)
+    # 右クリックメニュー (元・エンコード後のファイルを再生/場所を開く / rplsから情報再取得)
     # ------------------------------------------------------------------
     def _on_tree_right_click(self, event):
         iid = self.tree.identify_row(event.y)
@@ -6559,8 +6560,17 @@ class App(tk.Tk):
         selected_iids = [i for i in current_selection if i in self.row_data]
 
         menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="ファイルの場所を開く", command=lambda: self._open_containing_folder(iid))
-        menu.add_command(label="再生", command=lambda: self._play_file(iid))
+        menu.add_command(label="元のファイルを再生", command=lambda: self._play_file(iid))
+        menu.add_command(label="元のファイルの場所を開く", command=lambda: self._open_containing_folder(iid))
+        output_path = self._find_existing_output(iid) if self.row_data[iid].get("converted") else None
+        if output_path:
+            menu.add_command(label="エンコード後のファイルを再生", command=lambda: self._launch_player(output_path))
+            menu.add_command(label="エンコード後のファイルの場所を開く",
+                             command=lambda: self._open_folder_for_path(output_path))
+        else:
+            menu.add_command(label="エンコード後のファイルを再生(まだありません)", state="disabled")
+            menu.add_command(label="エンコード後のファイルの場所を開く(まだありません)", state="disabled")
+        menu.add_separator()
         menu.add_command(label="エンコード診断を見る", command=lambda: self._show_diagnostic_for_row(iid))
         menu.add_separator()
         if len(selected_iids) > 1:
