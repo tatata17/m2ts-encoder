@@ -32,7 +32,7 @@ rplsinfo.exe で「元ファイル名」「録画番組名」を取得して一�
     ダブルクリックしてもコンソール画面が表示されません。
 
 ■ 設定の保存場所について
-    登録バッチの一覧(m2ts_encoder_bats.json)やVLCのパスなどの設定は
+    登録バッチの一覧(m2ts_encoder_bats.json)や再生ソフトのパスなどの設定は
     %LOCALAPPDATA%\\m2ts_encoder\\ に小さなテキスト(json)として保存されます。
     同梱の既定バッチ自体はここにも作業フォルダにもファイルとして保存されません
     (実行時にだけ一時的に展開されます)。
@@ -54,8 +54,8 @@ rplsinfo.exe で「元ファイル名」「録画番組名」を取得して一�
 ■ 右クリックメニューについて
     一覧の各行を右クリックすると、以下の操作ができます。
     - ファイルの場所を開く: エクスプローラーでそのファイルを選択した状態で開く
-    - VLCで再生: VLCで再生する(初回はvlc.exeの場所を聞かれるので選択してください。
-      次回以降は自動的に使われます)
+    - 再生: 再生ソフトで開く(メニュー「設定」→「再生ソフトを選ぶ」で選べます。未指定ならVLC、
+      それも無ければWindowsの既定のアプリで開きます)
     - rplsから番組情報を再取得(BDAV用): BDAV形式(.../<番号>/STREAM/xxxxx.m2ts と
       .../<番号>/PLAYLIST/xxxxx.rpls という構成)で、m2ts単体からはタイトルが
       取得できない場合に、対応するrplsファイルから番組情報を読み直します。
@@ -1012,7 +1012,7 @@ def analyze_ffmpeg_log(
     診断ラベルは "OK" / "要確認" / "失敗" のいずれか。
     種類(カテゴリ)ごとに個別の上限で発生時刻を記録するため、
     1種類のエラーが多発しても他の種類のエラーが埋もれない。
-    秒数を保持しておくことで、あとからVLCでその時刻から再生する、といった用途に使える。
+    秒数を保持しておくことで、あとからプレーヤーでその時刻から再生する、といった用途に使える。
 
     誤検知を減らすため、次のものはノイズ/失敗として扱わない:
       - 録画の先頭(_HEAD_SECONDS)・末尾(_TAIL_SECONDS)に出るデコード系エラー
@@ -1984,6 +1984,21 @@ def find_vlc(explicit_path: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def player_seek_args(player_path: str, seconds: float) -> Optional[List[str]]:
+    """再生ソフトに「この時刻から再生」と伝える引数。時刻指定に対応していないソフトはNone"""
+    name = os.path.basename(player_path).lower()
+    if name.startswith("vlc"):
+        return [f"--start-time={seconds:.2f}"]
+    if name.startswith("mpv"):
+        return [f"--start={seconds:.2f}"]
+    if name.startswith("mpc-hc") or name.startswith("mpc-be"):
+        return ["/start", str(int(seconds * 1000))]
+    if name.startswith("potplayer"):
+        total = int(seconds)
+        return [f"/seek={total // 3600:02d}:{total % 3600 // 60:02d}:{total % 60:02d}"]
+    return None
+
+
 def load_bat_scripts() -> List[Dict[str, str]]:
     path = get_config_path()
     if not os.path.isfile(path):
@@ -2777,7 +2792,9 @@ MENU_TIPS = {
     "ログ(txt)を全削除": "「ログ」フォルダのtxt(まとめファイルも含む)を、すべて削除します。元に戻せません。",
     "エンコード診断結果を表示(全件)": "これまでのエンコードの診断結果(OK / 要確認)を、全件まとめて表示します。",
     "アップデートを確認": "新しい版があるか確認して、あれば更新します(今の版は自動でバックアップします)。",
-    "常にCUDAデコードで変換": "ONにすると、おまかせ・モノラル二か国語の分離など、どのエンコード設定でもCUDA(GPU)でデコードします。VLCでは出ないノイズがエンコード後に出る時用です。NVIDIA製GPUが必要です。バッチファイルを直接選んだ場合は対象外です。",
+    "再生ソフトを選ぶ": "右クリックの「再生」や、診断の時刻からの再生に使うソフトを選びます。VLC・mpv・MPC-HC・PotPlayerは、時刻を指定して再生できます。他のソフトは、ファイルを開くだけになります。",
+    "再生ソフトの指定を解除": "選んだ再生ソフトを解除します。VLCが入っていればVLCで、無ければWindowsの既定のアプリで開きます。",
+    "常にCUDAデコードで変換": "ONにすると、おまかせ・モノラル二か国語の分離など、どのエンコード設定でもCUDA(GPU)でデコードします。VLCなどのプレーヤーでは出ないノイズが、エンコード後に出る時用です。NVIDIA製GPUが必要です。バッチファイルを直接選んだ場合は対象外です。",
     "起動時に更新を確認する": "ONにすると、起動の数秒後に新しい版を確認して、あれば更新の案内を出します。",
     "旧版のバックアップを管理": "アップデートのたびに自動で作られる旧版のバックアップを、一覧・削除・その版に戻す、ができます。",
     "メニューの説明": "メニューの全項目と、その説明を、1つの画面で読めます(絞り込みもできます)。",
@@ -5263,7 +5280,7 @@ class App(tk.Tk):
             save_bat_scripts(self.bat_scripts)
         self.bat_name_to_path: Dict[str, str] = {}
 
-        # 設定(VLCのパスなど)
+        # 設定(再生ソフトのパスなど)
         self.settings: Dict[str, str] = load_settings()
         self._init_target_folder()
         self.noise_check_var = tk.BooleanVar(value=self.settings.get("noise_check", "1") != "0")
@@ -5548,6 +5565,9 @@ class App(tk.Tk):
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="エンコード設定...", command=lambda: self.open_settings_editor("preset"))
         settings_menu.add_command(label="バッチファイル管理...", command=lambda: self.open_settings_editor("bat"))
+        settings_menu.add_separator()
+        settings_menu.add_command(label="再生ソフトを選ぶ...", command=self._choose_player)
+        settings_menu.add_command(label="再生ソフトの指定を解除", command=self._reset_player)
         settings_menu.add_separator()
         self.force_cuda_var = tk.BooleanVar(value=self.settings.get("force_cuda", "0") == "1")
         settings_menu.add_checkbutton(
@@ -6522,7 +6542,7 @@ class App(tk.Tk):
         self.status_var.set(f"チャンネル '{channel}' の{len(matched_iids)}件を選択しました。{suffix}")
 
     # ------------------------------------------------------------------
-    # 右クリックメニュー (ファイルの場所を開く / VLCで再生 / rplsから情報再取得)
+    # 右クリックメニュー (ファイルの場所を開く / 再生 / rplsから情報再取得)
     # ------------------------------------------------------------------
     def _on_tree_right_click(self, event):
         iid = self.tree.identify_row(event.y)
@@ -6540,7 +6560,7 @@ class App(tk.Tk):
 
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="ファイルの場所を開く", command=lambda: self._open_containing_folder(iid))
-        menu.add_command(label="VLCで再生", command=lambda: self._play_with_vlc(iid))
+        menu.add_command(label="再生", command=lambda: self._play_file(iid))
         menu.add_command(label="エンコード診断を見る", command=lambda: self._show_diagnostic_for_row(iid))
         menu.add_separator()
         if len(selected_iids) > 1:
@@ -6861,55 +6881,86 @@ class App(tk.Tk):
             self.encode_queue.put(("rowstatus", iid, previous_status))
         self.encode_queue.put(("all_done",))
 
-    def _get_vlc_path(self) -> Optional[str]:
+    def _get_player_path(self) -> Optional[str]:
         """
-        VLCの実行ファイルパスを取得する。見つからなければファイル選択を促し、
-        選択されたパスは設定に保存して次回以降自動で使う。
+        再生ソフトの実行ファイルを返す。設定で選んだもの → (旧版の)VLCの設定 → 入っていればVLC の順に探す。
+        どれも無ければNone(その場合はWindowsの既定のアプリで開く)。
         """
-        vlc_path = find_vlc(self.settings.get("vlc_path"))
-        if vlc_path:
-            return vlc_path
+        for key in ("player_path", "vlc_path"):
+            path = self.settings.get(key)
+            if path and os.path.isfile(path):
+                return path
+        return find_vlc()
 
-        messagebox.showinfo(
-            "VLCが見つかりません",
-            "VLCの実行ファイル(vlc.exe)を選択してください。\n"
-            "一度選択すれば、次回からは自動で使われます。",
-        )
+    def _choose_player(self):
         selected = filedialog.askopenfilename(
-            title="vlc.exe を選択",
-            filetypes=[("VLC実行ファイル", "vlc.exe"), ("すべてのファイル", "*.*")],
+            title="再生に使うソフトの実行ファイルを選択",
+            filetypes=[("実行ファイル", "*.exe"), ("すべてのファイル", "*.*")],
         )
         if not selected:
-            return None
-        self.settings["vlc_path"] = selected
-        save_settings(self.settings)
-        return selected
-
-    def _launch_vlc(self, path: str, start_seconds: Optional[float] = None):
-        vlc_path = self._get_vlc_path()
-        if not vlc_path:
             return
+        self.settings["player_path"] = selected
+        save_settings(self.settings)
+        messagebox.showinfo(
+            "再生ソフト",
+            f"{os.path.basename(selected)} を再生に使います。\n"
+            + ("時刻を指定して再生できるソフトです。" if player_seek_args(selected, 1.0) is not None
+               else "このソフトは時刻の指定に対応していないため、時刻からの再生では、ファイルを開くだけになります。"),
+            parent=self,
+        )
 
-        cmd = [vlc_path, path]
+    def _reset_player(self):
+        self.settings.pop("player_path", None)
+        self.settings.pop("vlc_path", None)
+        save_settings(self.settings)
+        messagebox.showinfo(
+            "再生ソフト",
+            "再生ソフトの指定を解除しました。\nVLCが入っていればVLCで、無ければWindowsの既定のアプリで開きます。",
+            parent=self,
+        )
+
+    def _launch_player(self, path: str, start_seconds: Optional[float] = None):
+        player = self._get_player_path()
+        if not player:
+            # 再生ソフトが指定されていない(VLCも無い)ときは、Windowsの既定のアプリで開く
+            try:
+                if sys.platform == "win32":
+                    os.startfile(path)  # type: ignore[attr-defined]
+                else:
+                    subprocess.Popen(["xdg-open", path])
+            except Exception as e:
+                messagebox.showerror("エラー", f"ファイルを開けませんでした:\n{e}")
+                return
+            if start_seconds is not None:
+                self._append_log(
+                    f"[再生] 再生ソフトが未指定のため、既定のアプリで開きました。{format_minutes_seconds(start_seconds)}付近へは、"
+                    "手で移動してください(メニュー「設定」→「再生ソフトを選ぶ」で、時刻指定ができるソフトを選べます)。")
+            return
+        cmd = [player, path]
         if start_seconds is not None:
-            cmd.append(f"--start-time={start_seconds:.2f}")
-
+            extra = player_seek_args(player, start_seconds)
+            if extra is None:
+                self._append_log(
+                    f"[再生] {os.path.basename(player)} は時刻の指定に対応していないため、ファイルを開くだけにしました。"
+                    f"{format_minutes_seconds(start_seconds)}付近へは、手で移動してください。")
+            else:
+                cmd += extra
         try:
             subprocess.Popen(cmd)
         except Exception as e:
-            messagebox.showerror("エラー", f"VLCを起動できませんでした:\n{e}")
+            messagebox.showerror("エラー", f"再生ソフトを起動できませんでした:\n{e}")
 
-    def _play_with_vlc(self, iid: str):
+    def _play_file(self, iid: str):
         data = self.row_data.get(iid)
         if not data:
             return
-        self._launch_vlc(data["path"])
+        self._launch_player(data["path"])
 
-    def _play_with_vlc_at(self, path: Optional[str], seconds: float):
+    def _play_file_at(self, path: Optional[str], seconds: float):
         if not path or not os.path.isfile(path):
             messagebox.showerror("エラー", f"ファイルが見つかりません:\n{path}")
             return
-        self._launch_vlc(path, seconds)
+        self._launch_player(path, seconds)
 
     def _apply_rpls_info_to_row(self, iid: str) -> Tuple[bool, str]:
         """
@@ -8685,7 +8736,7 @@ class App(tk.Tk):
             text=(
                 f"{len(entries)}件のファイルで確認が必要です。"
                 "(項目をクリックすると開いて詳細が見られます。"
-                "時刻の項目は右クリックでVLC再生ができます)"
+                "時刻の項目は右クリックで、その時刻からの再生ができます)"
             ),
             padding=8,
             wraplength=720,
@@ -8791,13 +8842,13 @@ class App(tk.Tk):
             menu = tk.Menu(dialog, tearoff=0)
             if seconds is not None:
                 menu.add_command(
-                    label="元のファイルをその時刻からVLCで再生",
-                    command=lambda: self._play_with_vlc_at(source_path, seconds),
+                    label="元のファイルをその時刻から再生",
+                    command=lambda: self._play_file_at(source_path, seconds),
                 )
                 if output_path and os.path.isfile(output_path):
                     menu.add_command(
-                        label="エンコード後のファイルをその時刻からVLCで再生",
-                        command=lambda: self._play_with_vlc_at(output_path, seconds),
+                        label="エンコード後のファイルをその時刻から再生",
+                        command=lambda: self._play_file_at(output_path, seconds),
                     )
                     menu.add_command(
                         label=f"この時刻({format_minutes_seconds(seconds)})をファイル名に追記してリネーム",
