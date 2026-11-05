@@ -3059,7 +3059,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.05.1"
+APP_VERSION = "2026.11.05.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5

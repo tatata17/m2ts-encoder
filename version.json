@@ -1,5 +1,5 @@
 {
-  "version":"2026.11.05.1",
+  "version":"2026.11.05.2",
   "file": "m2ts_encoder.pyw",
-  "notes":""
+  "notes":"VLCが無くても使えるようになりました。メニュー「設定」→「再生ソフトを選ぶ」で、好きな再生ソフトを選べます(VLC・mpv・MPC-HC・PotPlayerは時刻指定つきで再生)。未指定なら、Windowsの既定のアプリで開きます。"
 }
