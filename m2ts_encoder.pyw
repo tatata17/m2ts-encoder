@@ -2399,6 +2399,72 @@ PRESET_BAT_ENV = {
 }
 
 
+# ---------------------------------------------------------------------------
+# エンコーダー(映像の圧縮に使うもの)。既定はNVIDIAのGPU(hevc_nvenc)。
+# GPUが無い環境向けに、Intel(QSV)・AMD(AMF)・CPU(libx265)にも切り替えられる。
+# ---------------------------------------------------------------------------
+ENCODER_CHOICES: List[Tuple[str, str]] = [
+    ("auto", "自動(使えるものを自動で選ぶ)"),
+    ("nvenc", "NVIDIA(hevc_nvenc)"),
+    ("qsv", "Intel(hevc_qsv)"),
+    ("amf", "AMD(hevc_amf)"),
+    ("x265", "CPU(libx265・遅い)"),
+]
+ENCODER_AUTO_ORDER = ("nvenc", "qsv", "amf", "x265")
+_ENCODER_CODEC = {"nvenc": "hevc_nvenc", "qsv": "hevc_qsv", "amf": "hevc_amf", "x265": "libx265"}
+_ENCODER_LABEL = {k: v for k, v in ENCODER_CHOICES}
+_ACTIVE_ENCODER = "nvenc"  # 実際にバッチを作る時に使うエンコーダー(アプリが、設定と使える物から決めて入れる)
+
+
+def set_active_encoder(name: str) -> None:
+    global _ACTIVE_ENCODER
+    _ACTIVE_ENCODER = name if name in _ENCODER_CODEC else "nvenc"
+
+
+def get_active_encoder() -> str:
+    return _ACTIVE_ENCODER
+
+
+def encoder_video_args(encoder: str, qp: int) -> List[str]:
+    """映像エンコーダーの指定と画質の引数。画質は、設定のQP値から各エンコーダーの目安に換算する"""
+    codec = _ENCODER_CODEC.get(encoder, "hevc_nvenc")
+    if encoder == "x265":
+        return ["-c:v", codec, "-preset", "fast", "-crf", str(max(0, qp - 4))]
+    if encoder == "qsv":
+        return ["-c:v", codec, "-global_quality", str(max(1, qp - 4))]
+    if encoder == "amf":
+        return ["-c:v", codec, "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp), "-qp_b", str(qp)]
+    return ["-c:v", codec, "-qp", str(qp)]
+
+
+def detect_available_encoders(ffmpeg_path: str, timeout: float = 25.0) -> Dict[str, bool]:
+    """各エンコーダーで、ごく短い映像を実際にエンコードしてみて、使えるかを調べる"""
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    result: Dict[str, bool] = {}
+    for name in ENCODER_AUTO_ORDER:
+        cmd = [ffmpeg_path, "-hide_banner", "-loglevel", "error", "-nostdin",
+               "-f", "lavfi", "-i", "color=c=black:s=640x360:r=30:d=0.5",
+               "-frames:v", "5", "-pix_fmt", "yuv420p"] + encoder_video_args(name, 32) + ["-f", "null", "-"]
+        try:
+            proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, creationflags=flags, timeout=timeout)
+            result[name] = proc.returncode == 0
+        except Exception:
+            result[name] = False
+    return result
+
+
+def resolve_encoder(choice: str, available: Optional[Dict[str, bool]]) -> str:
+    """設定(自動/個別)と、使えるエンコーダーから、実際に使うものを決める"""
+    if choice in _ENCODER_CODEC:
+        return choice
+    if available:
+        for name in ENCODER_AUTO_ORDER:
+            if available.get(name):
+                return name
+    return "nvenc"
+
+
 def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str = '"%1"') -> Tuple[str, str]:
     """
     設定からffmpegコマンド行(cmd.exe用の文字列)と出力拡張子(".mkv"/".mp4")を作る。
@@ -2408,8 +2474,10 @@ def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str =
     ext = "." + str(o["container"])
     # 字幕を後から合体する設定の時は、エンコードの段階では字幕を入れない
     inline_subs = bool(o["subs"]) and not o["sub_postmux"]
+    encoder = get_active_encoder()
+    use_cuda = bool(o["cuda"]) and encoder == "nvenc"  # CUDAデコードはNVIDIAのGPUだけ
     parts: List[str] = ["ffmpeg"]
-    if o["cuda"]:
+    if use_cuda:
         parts += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
     if o["catv"]:
         parts += ["-scan_all_pmts", "1", "-probesize", "500M", "-analyzeduration", "500M"]
@@ -2449,25 +2517,27 @@ def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str =
         # 書き込まれると、ファイルの中で音声が映像より遠く手前に置かれ、シークした後その部分が無音になる。
         # 300秒(単位はマイクロ秒)まで待って並べ替える(0=無制限だと、パケットが来ない音声があると全部をためてしまう)
         parts += ["-max_interleave_delta", "300000000"]
-    parts += ["-c:v", "hevc_nvenc"]
+    parts += ["-c:v", _ENCODER_CODEC.get(encoder, "hevc_nvenc")]
 
     filters: List[str] = []
-    if o["cuda"]:
+    if use_cuda:
         filters += ["hwdownload", "format=nv12"]
     if o["deint"] == "yadif":
         filters.append("yadif=1")
     elif o["deint"] == "bwdif":
         filters.append("bwdif=1")
-    if o["cuda"]:
+    if use_cuda:
         filters.append("format=yuv420p")
     if filters:
         vf = ",".join(filters)
         parts += ["-vf", f'"{vf}"' if ("," in vf) else vf]
-    if o["cuda"]:
+    if use_cuda:
         parts += ["-color_primaries", "bt709", "-color_trc", "bt709",
                   "-colorspace", "bt709", "-color_range", "tv"]
 
-    parts += ["-qp", str(o["qp"])]
+    # 画質の引数。ここでは、上で入れた "-c:v <codec>" の直後ではなく、従来どおりこの位置に置く
+    quality = encoder_video_args(encoder, int(o["qp"]))[2:]
+    parts += quality
     if o["container"] == "mp4" and o["hvc1"]:
         parts += ["-tag:v", "hvc1"]
 
@@ -2793,6 +2863,13 @@ MENU_TIPS = {
     "ログ(txt)を全削除": "「ログ」フォルダのtxt(まとめファイルも含む)を、すべて削除します。元に戻せません。",
     "エンコード診断結果を表示(全件)": "これまでのエンコードの診断結果(OK / 要確認)を、全件まとめて表示します。",
     "アップデートを確認": "新しい版があるか確認して、あれば更新します(今の版は自動でバックアップします)。",
+    "エンコーダー(映像の圧縮に使うもの)": "映像の圧縮に使うものを選びます。「自動」は、使えるものを上から順(NVIDIA→Intel→AMD→CPU)に選びます。GPUが無い環境では、CPU(libx265)になります(遅いです)。エンコード設定(プリセット)にだけ効きます。",
+    "使えるエンコーダーを調べる": "ffmpegで短い映像を実際にエンコードして、NVIDIA・Intel・AMD・CPUのどれが使えるかを調べて表示します。",
+    "NVIDIA(hevc_nvenc)": "NVIDIAのGPUのハードウェアエンコード(既定)。速いです。",
+    "Intel(hevc_qsv)": "Intelの内蔵GPU(Quick Sync)のハードウェアエンコード。Windowsで動作する環境のみ。",
+    "AMD(hevc_amf)": "AMDのGPUのハードウェアエンコード。",
+    "CPU(libx265・遅い)": "GPUを使わず、CPUだけでエンコードします。どの環境でも動きますが、遅いです。",
+    "自動(使えるものを自動で選ぶ)": "使えるものを、NVIDIA→Intel→AMD→CPUの順に選びます。",
     "再生ソフトを選ぶ": "右クリックの「再生」や、診断の時刻からの再生に使うソフトを選びます。VLC・mpv・MPC-HC・PotPlayerは、時刻を指定して再生できます。他のソフトは、ファイルを開くだけになります。",
     "再生ソフトの指定を解除": "選んだ再生ソフトを解除します。VLCが入っていればVLCで、無ければWindowsの既定のアプリで開きます。",
     "常にCUDAデコードで変換": "ONにすると、おまかせ・モノラル二か国語の分離など、どのエンコード設定でもCUDA(GPU)でデコードします。VLCなどのプレーヤーでは出ないノイズが、エンコード後に出る時用です。NVIDIA製GPUが必要です。バッチファイルを直接選んだ場合は対象外です。",
@@ -3060,7 +3137,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.06.1"
+APP_VERSION = "2026.11.06.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5281,8 +5358,11 @@ class App(tk.Tk):
             save_bat_scripts(self.bat_scripts)
         self.bat_name_to_path: Dict[str, str] = {}
 
+        self.encoder_avail: Optional[Dict[str, bool]] = None  # 使えるエンコーダー(起動時に裏で調べる)
+        self._encoder_lock = threading.Lock()
         # 設定(再生ソフトのパスなど)
         self.settings: Dict[str, str] = load_settings()
+        set_active_encoder(resolve_encoder(self.settings.get("encoder", "auto"), None))  # 「自動」は、調べ終わるまでNVIDIA
         self._init_target_folder()
         self.noise_check_var = tk.BooleanVar(value=self.settings.get("noise_check", "1") != "0")
 
@@ -5299,6 +5379,7 @@ class App(tk.Tk):
         self._setup_tooltips()
         # 前回、途中で終わったログを、まとめに追記する。保存期間を過ぎた分の整理も(裏で)する
         threading.Thread(target=lambda: (fold_leftover_run_logs(), prune_log_store()), daemon=True).start()
+        threading.Thread(target=self._detect_encoders_bg, daemon=True).start()  # 使えるエンコーダーを裏で調べる
         self._refresh_bat_combo()
         if getattr(self, "_folder_note", ""):
             self.after(300, lambda: self._append_log("[対象フォルダ] " + self._folder_note))
@@ -5567,6 +5648,14 @@ class App(tk.Tk):
         settings_menu.add_command(label="エンコード設定...", command=lambda: self.open_settings_editor("preset"))
         settings_menu.add_command(label="バッチファイル管理...", command=lambda: self.open_settings_editor("bat"))
         settings_menu.add_separator()
+        self.encoder_var = tk.StringVar(value=self.settings.get("encoder", "auto"))
+        encoder_menu = tk.Menu(settings_menu, tearoff=0)
+        for key, label in ENCODER_CHOICES:
+            encoder_menu.add_radiobutton(label=label, variable=self.encoder_var, value=key,
+                                         command=self._on_encoder_changed)
+        encoder_menu.add_separator()
+        encoder_menu.add_command(label="使えるエンコーダーを調べる...", command=self._show_available_encoders)
+        settings_menu.add_cascade(label="エンコーダー(映像の圧縮に使うもの)", menu=encoder_menu)
         settings_menu.add_command(label="再生ソフトを選ぶ...", command=self._choose_player)
         settings_menu.add_command(label="再生ソフトの指定を解除", command=self._reset_player)
         settings_menu.add_separator()
@@ -6712,6 +6801,9 @@ class App(tk.Tk):
         ffmpeg = find_ffmpeg()
         if not ffmpeg:
             return None, "ffmpegが見つかりません"
+        avail = self._encoder_avail_ready()
+        if avail is not None and not avail.get("nvenc"):
+            return None, "NVIDIAのGPUが使えないため(CUDAデコードと比べる検査です)"
 
         creationflags = 0
         if sys.platform == "win32":
@@ -6901,6 +6993,65 @@ class App(tk.Tk):
             if path and os.path.isfile(path):
                 return path
         return find_vlc()
+
+    # ---- エンコーダー(NVIDIA / Intel / AMD / CPU) ----
+    def _detect_encoders_bg(self):
+        """起動時に、使えるエンコーダーを裏で調べる(ffmpegが無ければ何もしない)"""
+        self._encoder_avail_ready()
+        try:
+            self.after(0, self._apply_active_encoder)
+        except Exception:
+            pass
+
+    def _encoder_avail_ready(self, force: bool = False) -> Optional[Dict[str, bool]]:
+        """使えるエンコーダーの調べ結果(未調査なら、いま調べる)。ffmpegが無ければNone"""
+        with self._encoder_lock:
+            if self.encoder_avail is None or force:
+                ffmpeg = find_ffmpeg()
+                if not ffmpeg:
+                    return None
+                self.encoder_avail = detect_available_encoders(ffmpeg)
+            return self.encoder_avail
+
+    def _current_encoder(self) -> str:
+        choice = self.settings.get("encoder", "auto")
+        if choice == "auto":
+            return resolve_encoder("auto", self.encoder_avail)
+        return resolve_encoder(choice, None)
+
+    def _apply_active_encoder(self):
+        set_active_encoder(self._current_encoder())
+
+    def _on_encoder_changed(self):
+        self.settings["encoder"] = self.encoder_var.get()
+        save_settings(self.settings)
+        self._apply_active_encoder()
+        label = _ENCODER_LABEL.get(self._current_encoder(), "")
+        self.status_var.set(f"エンコーダー: {label}")
+
+    def _show_available_encoders(self):
+        self.status_var.set("使えるエンコーダーを調べています...")
+
+        def worker():
+            avail = self._encoder_avail_ready(force=True)
+            self.after(0, lambda: done(avail))
+
+        def done(avail):
+            self._apply_active_encoder()
+            self.status_var.set("")
+            if avail is None:
+                messagebox.showinfo("エンコーダー", "ffmpegが見つかりません。", parent=self)
+                return
+            lines = [f"{'○' if avail.get(k) else '×'} {_ENCODER_LABEL[k]}" for k in ENCODER_AUTO_ORDER]
+            chosen = _ENCODER_LABEL.get(self._current_encoder(), "")
+            messagebox.showinfo(
+                "使えるエンコーダー",
+                "ffmpegで、短い映像を実際にエンコードして調べました。\n\n" + "\n".join(lines)
+                + f"\n\n今使うもの: {chosen}\n(「自動」のときは、上から順に、使える最初のものを選びます)",
+                parent=self,
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _choose_player(self):
         selected = filedialog.askopenfilename(
@@ -8242,6 +8393,13 @@ class App(tk.Tk):
                 options = dict(options)
                 options["cuda"] = True
                 self.encode_queue.put(("log", "[設定] 「常にCUDAデコードで変換」がONのため、CUDAデコードで変換します"))
+            if self.settings.get("encoder", "auto") == "auto":
+                self._encoder_avail_ready()  # 未調査なら、ここで調べる
+            self._apply_active_encoder()
+            encoder = get_active_encoder()
+            if encoder != "nvenc":
+                self.encode_queue.put(("log", f"[設定] エンコーダー: {_ENCODER_LABEL[encoder]}"
+                                       + ("(CUDAデコードはNVIDIAのGPU専用なので使いません)" if normalize_encode_options(options)["cuda"] else "")))
             fd, temp_bat_path = tempfile.mkstemp(suffix=".bat", prefix="m2ts_encoder_")
             os.close(fd)
             with io.open(temp_bat_path, "w", encoding="utf-8", newline="") as f:
@@ -8272,6 +8430,9 @@ class App(tk.Tk):
             bat_dir = os.path.dirname(bat_path) or self.folder
             display_bat_name = os.path.basename(bat_path)
 
+        if not bat_path.startswith(PRESET_PREFIX) and self._current_encoder() != "nvenc":
+            self.encode_queue.put(("log", "[注意] バッチファイルは、書かれているエンコーダーのまま実行します"
+                                          "(多くはNVIDIAのhevc_nvenc)。「エンコーダー」の設定は、エンコード設定(プリセット)にだけ効きます。"))
         try:
             return self._run_bat_process(m2ts_path, actual_bat_path, bat_dir, display_bat_name, iid)
         finally:
