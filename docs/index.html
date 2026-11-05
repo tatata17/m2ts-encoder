@@ -129,6 +129,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li><a href="#more">その他の機能</a></li>
     <li><a href="#update">アップデート</a></li>
     <li><a href="#trouble">困ったとき</a></li>
+    <li><a href="#files">ファイルの置き場所</a></li>
     <li><a href="#history">更新履歴</a></li>
   </ol>
 </nav>
@@ -141,6 +142,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <a class="btn" id="dl" href="https://github.com/tatata17/m2ts-encoder/raw/main/m2ts_encoder.pyw">⬇ m2ts_encoder.pyw をダウンロード</a>
     <span class="ver" id="ver">最新版を確認中…</span>
   </div>
+  <p class="note" style="background:var(--accent-soft);border-color:var(--accent)"><b>ヒント:</b> ボタンやメニューにマウスを置いて少し待つと、説明が出ます。メニューの全項目の説明は、「ヘルプ → メニューの説明」で1つの画面にまとめて読めます。</p>
   <ul class="feat">
     <li>番組名・チャンネル・放送日を一覧表示</li>
     <li>「おまかせ」で音声・字幕・インターレースを自動判定してエンコード</li>
@@ -160,7 +162,9 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td>ffmpeg / ffprobe</td><td>アプリと同じフォルダに置くか、PATHを通します。<code>ffprobe</code> は「おまかせ」の自動判定に使います。<br>入手先: <a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の Windows 用ビルド</a>。<b>「full」版</b>を選んでください(ARIB字幕を入れるのに必要な部品は、full版にだけ入っています)。zipの中の <code>bin</code> フォルダにある <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> を使います。</td></tr>
     <tr><td>rplsinfo.exe</td><td>同じフォルダに置くか、PATHを通します。番組名・チャンネル・放送日の取得に使います。<br>入手先: <a href="https://github.com/tsukumijima/rplsinfo" target="_blank" rel="noopener">tsukumijima/rplsinfo</a> の Releases にあるzipの中の <code>rplsinfo.exe</code>。</td></tr>
     <tr><td>NVIDIAのGPU</td><td>既定のエンコード設定は <code>hevc_nvenc</code>(NVIDIAのハードウェアエンコード)を使います。</td></tr>
+    <tr><td>tkinterdnd2 <small>(任意)</small></td><td>「縦横比を直す」にファイルをドラッグ&amp;ドロップしたい場合だけ、コマンドプロンプトで <code>pip install tkinterdnd2</code> を実行します。入れなくても、ほかの機能はすべて使えます。</td></tr>
   </table></div>
+  <p class="note"><b>入れるもの・入れないもの:</b> 上の表のほかに、Pythonの追加ライブラリ(<code>pip install</code>)は必要ありません(<code>tkinterdnd2</code> は任意)。Pythonのインストーラーでは「tcl/tk」のチェックを外さないでください(画面の表示に使います)。</p>
   <p class="note">「PATHを通す」が分からない場合は、ffmpeg と rplsinfo を <code>m2ts_encoder.pyw</code> と<b>同じフォルダに置く</b>だけで動きます。PATHの設定のしかたは、<a href="https://qiita.com/shuhey/items/7ee0d25f14a997c9e285" target="_blank" rel="noopener">こちらの解説(Qiita)</a>が参考になります。</p>
   <ol class="steps">
     <li><code>m2ts_encoder.pyw</code> をダウンロードして、好きなフォルダ(録画ファイルのあるフォルダでも可)に置く</li>
@@ -274,14 +278,16 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
   <h2><span class="n">6</span>その他の機能</h2>
   <div class="callouts">
     <div><b>変換済みm2tsを削除</b><br>メニュー「ツール」。変換済み(mkv/mp4がある)の元m2tsをまとめて削除します。mkv/mp4は削除しません。ノイズ検査が未完了・中断のものは対象になりません。</div>
-    <div><b>作品ごとに仕分け</b><br>仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。ファイルごとに移動先を選べ、直前の1回は元に戻せます。作品名は、話数や <code>[二]</code> を除いた名前の最初の空白までを自動で提案します(1本だけの番組は動かしません)。</div>
+    <div><b>作品ごとに仕分け</b><br>仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。ファイルごとに移動先を選べ、直前の1回は元に戻せます。作品名は、同じ放送局の他の番組名と見比べて、複数の回に共通する名前(空白を含めて)を自動で提案します(1本だけの番組は動かしません)。</div>
     <div><b>二重にエンコードしたファイルを探して削除</b><br>番組名・放送日・開始時刻が同じ変換済みmkv/mp4を組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。対のcsvも一緒に削除します(ごみ箱には入りません)。</div>
     <div><b>縦横比を直す</b><br>変換済みmkv/mp4の4:3 / 16:9表示を、再エンコードなしで書き換えます。一覧から選ぶか、ドラッグ&amp;ドロップ(要 <code>pip install tkinterdnd2</code>)で追加します。</div>
     <div><b>ファイル名の記号を全角に修正</b><br>過去の版で半角記号(<code>;</code> <code>@</code> <code>$</code> など)になったファイル名を、本来の全角へ戻します。</div>
     <div><b>一覧をCSVに保存</b><br>メニュー「ファイル」から。</div>
     <div><b>右クリックメニュー</b><br>ファイルの場所を開く / VLCで再生 / エンコード診断 / ノイズ検査 / rplsから番組情報を再取得(BDAV用)。</div>
-    <div><b>ログ</b><br>保存、フォルダを開く、<b>ログのtxtを1つにまとめる</b>(AIに渡すときに便利)、全削除。</div>
-    <div><b>ツールチップ</b><br>ボタンにマウスを置いて約1.5秒待つと、説明が出ます。</div>
+    <div><b>ログ</b><br>エンコードのログは、1つのtxt(<code>ログ/まとめ_実行ログ.txt</code>)に自動で追記されます。「ログを管理」で、選んだログを1つのtxtや1件ずつに書き出す・内容を見る・削除できます(AIに渡すときに便利)。1件ずつ別のtxtで保存する方式にも切り替えられます。</div>
+    <div><b>ツールチップ・メニューの説明</b><br>ボタンにマウスを置いて約1.5秒待つと、説明が出ます。メニューの項目は、「ヘルプ → メニューの説明」で一覧できます。</div>
+    <div><b>読み取るフォルダを変える</b><br>画面上の「フォルダを変更...」で、読み取るフォルダを選べます。選んだフォルダは次回も使われ、「このアプリのフォルダに戻す」で既定に戻せます。</div>
+    <div><b>常にCUDAデコードで変換</b><br>メニュー「設定」。VLCでは出ないノイズがエンコード後に出るときに、ONにするとどのエンコード設定でもCUDA(GPU)でデコードします(NVIDIAのGPUが必要)。</div>
   </div>
 </section>
 
@@ -298,6 +304,11 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>起動時の自動確認は、同じメニューの「起動時に更新を確認する」で切り替えられます。</li>
     <li>ダウンロードしたファイルは、版番号と構文を確認してから置き換えるので、通信が途中で切れても今の版は壊れません。</li>
   </ul>
+  <h3>更新しても残るもの・元に戻したいとき</h3>
+  <ul class="tight">
+    <li><b>残るもの:</b> 登録したバッチ、自作のエンコード設定、VLCのパス、対象フォルダ、手で決めた作品名の覚え、ログ、仕分け済みのファイルは、更新しても消えません(アプリの設定は <code>%LOCALAPPDATA%\m2ts_encoder\</code> に、ログと仕分けはアプリと同じ場所にあるため、<code>.pyw</code> を置き換えても影響しません)。</li>
+    <li><b>元に戻すには:</b> メニュー「ヘルプ」→「旧版のバックアップを管理...」で、古い版を選んで「選んだ版に戻す」ができます。不要になったバックアップは、同じ画面でまとめて削除できます(残す本数は変えられます)。</li>
+  </ul>
   <h3>設定ファイルの場所</h3>
   <p><code>%LOCALAPPDATA%\m2ts_encoder\</code> に、小さなJSONとして保存されます(登録したバッチ、VLCのパスなど)。旧名 <code>m2ts_info_viewer</code> の設定がある場合は、初回起動時に自動で引き継ぎます。</p>
   <div id="notes"></div>
@@ -313,16 +324,32 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td><code>.pyw</code> をダブルクリックしても開かない</td><td>Pythonを入れ直し、<code>py launcher</code> と <code>.pyw</code> の関連付けにチェックを入れる</td></tr>
     <tr><td>エンコードの途中で止まって見える</td><td>字幕が非常にまばらな録画では、最後の「合体」で元のm2tsを読み進めるため、数分かかることがあります。ディスクの読み込みが動いていれば待ってください。</td></tr>
     <tr><td>診断が「要確認」</td><td>診断の詳細で時刻を確認し、VLCで元のm2tsと出力の両方を見比べる</td></tr>
+    <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入手先は、上の「用意するもの」を見てください。</td></tr>
+    <tr><td>VLCでは出ないノイズが、エンコードした動画に出る</td><td>メニュー「設定」→「常にCUDAデコードで変換」をONにして、もう一度エンコードします(NVIDIAのGPUが必要)。</td></tr>
+    <tr><td>更新の案内が出ない</td><td>メニュー「ヘルプ」→「起動時に更新を確認する」がONか確認します。エンコード中は案内を出さず、ログに表示するだけです。</td></tr>
     <tr><td>同名の <code>.mkv</code> が残っていてエンコードに失敗する</td><td>失敗や中断で残った <code>番組.m2ts.mkv</code> は、次のエンコード開始時に自動で削除されます</td></tr>
   </table></div>
 </section>
 
+<section id="files">
+  <h2><span class="n">9</span>ファイルの置き場所</h2>
+  <p>アプリが作るファイルの場所です。どれも、消しても録画やエンコード済みファイルには影響しません(設定を消すと、設定が初期状態に戻ります)。</p>
+  <div class="scroll"><table>
+    <tr><th>場所</th><th>中身</th></tr>
+    <tr><td><code>m2ts_encoder.pyw</code> と同じフォルダ</td><td><code>ログ/</code>(エンコードのログ。既定は <code>まとめ_実行ログ.txt</code> の1つ)、<code>仕分け/</code>(チャンネル別・作品ごとの仕分け先)。<code>ffmpeg.exe</code> や <code>rplsinfo.exe</code> を置く場所でもあります。</td></tr>
+    <tr><td>録画ファイルの隣</td><td>番組情報とノイズ検査の結果を書いたCSV(<code>番組名.m2ts.csv</code> など)。エンコードしたmkv/mp4も、元のm2tsの隣にできます。</td></tr>
+    <tr><td><code>%LOCALAPPDATA%\m2ts_encoder\</code></td><td>設定(JSON)、<code>backup\</code>(旧版のバックアップ)、作品ごとの仕分けを元に戻すための記録。</td></tr>
+  </table></div>
+  <p class="note">対象フォルダを「フォルダを変更...」で変えた場合も、ログ・仕分け・ffmpegの置き場所は <code>m2ts_encoder.pyw</code> のフォルダのままです。ただし「仕分け」フォルダだけは、選んだ対象フォルダの下に作られます。</p>
+</section>
+
 <section id="history">
-  <h2><span class="n">9</span>更新履歴</h2>
+  <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
   <h3>2026-11-05 <small style="color:var(--muted);font-weight:400">(ドキュメントのみ)</small></h3>
   <ul class="tight">
-    <li>サイトとREADMEの「用意するもの」に、ffmpeg(gyan.dev の full 版)と rplsinfo の入手先、「PATHを通す」の解説リンクを追記しました。</li>
+    <li>使い方サイトを整理しました。ヒントの枠、必須・任意の区別(tkinterdnd2は任意)、「更新しても残るもの・元に戻したいとき」、「ファイルの置き場所」の一覧、困ったときの項目を追加し、古くなっていた説明(作品名の提案、ログの保存方法)を直しました。</li>
+    <li>ffmpeg(gyan.dev の full 版)と rplsinfo の入手先、「PATHを通す」の解説リンクを、サイトとREADMEの「用意するもの」に追記しました。</li>
   </ul>
   <details><summary><b>2026-11-04 <small style="color:var(--muted);font-weight:400">(2026.11.04.1〜2026.11.04.11)</small></b></summary>
   <ul class="tight">
