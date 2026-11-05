@@ -157,8 +157,8 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><th>もの</th><th>説明</th></tr>
     <tr><td>Windows 10 / 11</td><td></td></tr>
     <tr><td>Python 3</td><td>3.9以上を推奨。インストーラーで <b>「Add python.exe to PATH」</b> と、<code>.pyw</code> を関連付ける <b>「py launcher」</b> にチェックを入れてください。</td></tr>
-    <tr><td>ffmpeg / ffprobe</td><td>アプリと同じフォルダに置くか、PATHを通します。<code>ffprobe</code> は「おまかせ」の自動判定に使います。</td></tr>
-    <tr><td>rplsinfo.exe</td><td>同じフォルダに置くか、PATHを通します。番組名・チャンネル・放送日の取得に使います。</td></tr>
+    <tr><td>ffmpeg / ffprobe</td><td>アプリと同じフォルダに置くか、PATHを通します。<code>ffprobe</code> は「おまかせ」の自動判定に使います。<br>入手先: <a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の Windows 用ビルド</a>。<b>「full」版</b>を選んでください(ARIB字幕を入れるのに必要な部品は、full版にだけ入っています)。zipの中の <code>bin</code> フォルダにある <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> を使います。</td></tr>
+    <tr><td>rplsinfo.exe</td><td>同じフォルダに置くか、PATHを通します。番組名・チャンネル・放送日の取得に使います。<br>入手先: <a href="https://github.com/tsukumijima/rplsinfo" target="_blank" rel="noopener">tsukumijima/rplsinfo</a> の Releases にあるzipの中の <code>rplsinfo.exe</code>。</td></tr>
     <tr><td>NVIDIAのGPU</td><td>既定のエンコード設定は <code>hevc_nvenc</code>(NVIDIAのハードウェアエンコード)を使います。</td></tr>
   </table></div>
   <ol class="steps">
@@ -319,7 +319,11 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">9</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <h3>2026-11-04 <small style="color:var(--muted);font-weight:400">(2026.11.04.1〜2026.11.04.11)</small></h3>
+  <h3>2026-11-05 <small style="color:var(--muted);font-weight:400">(ドキュメントのみ)</small></h3>
+  <ul class="tight">
+    <li>サイトとREADMEの「用意するもの」に、ffmpeg(gyan.dev の full 版)と rplsinfo の入手先を追記しました。</li>
+  </ul>
+  <details><summary><b>2026-11-04 <small style="color:var(--muted);font-weight:400">(2026.11.04.1〜2026.11.04.11)</small></b></summary>
   <ul class="tight">
     <li>組み込みのエンコード設定とバッチの名前から、特定のサービス名を外しました(「mp4・モノラル二か国語・yadif」など)。旧い名前で登録されていたバッチは、自動で新しい名前に置き換わります。</li>
     <li>起動時の更新の案内を、スキャンの前に出すようにしました。起動してすぐ更新を確認し、新しい版があれば先に案内を出して、答えたあとでスキャンを始めます(更新の確認に3秒以上かかる場合は待たずにスキャンを始め、終わってから案内を出します)。</li>
@@ -329,6 +333,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>設定 →「常にCUDAデコードで変換」を追加。ONにすると、おまかせやモノラル二か国語の分離など、どのエンコード設定でもCUDA(GPU)でデコードします。VLCでは出ないノイズがエンコード後に出るファイルを、設定を切り替えるだけで二か国語の分離なども含めて変換できます(NVIDIA製GPUが必要。既定はOFF)。</li>
     <li>読み取るフォルダ(対象フォルダ)を、画面上の「フォルダを変更...」で選べるようにしました。選んだフォルダは次回も使われ、「このアプリのフォルダに戻す」で既定(.pywがあるフォルダ)に戻せます。フォルダを.pywのアイコンにドラッグ&amp;ドロップして起動すると、そのフォルダを(記憶せずに)使います。「仕分け」フォルダは、対象フォルダの下に作られます。</li>
   </ul>
+  </details>
   <details><summary><b>2026-10-30 <small style="color:var(--muted);font-weight:400">(2026.10.30.2〜2026.10.30.12)</small></b></summary>
   <ul class="tight">
     <li>ヘルプ →「メニューの説明」を追加。メニューの全項目と説明を、1つの画面で読めます(絞り込みつき)。</li>

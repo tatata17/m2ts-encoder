@@ -20,8 +20,8 @@ Python(tkinter)で動く **`m2ts_encoder.pyw` 1つだけ** で動作します(�
 |---|---|
 | Windows 10/11 | |
 | Python 3 | 3.9以上を推奨。公式サイトからインストール。インストーラーで **「Add python.exe to PATH」** と、`.pyw` を関連付ける **「py launcher」** にチェックを入れてください |
-| ffmpeg / ffprobe | 同じフォルダに置くか、PATHを通す(`ffprobe` は「おまかせ」の自動判定に使います) |
-| rplsinfo.exe | 同じフォルダに置くか、PATHを通す(番組名・チャンネル・放送日の取得に使います) |
+| ffmpeg / ffprobe | 同じフォルダに置くか、PATHを通す(`ffprobe` は「おまかせ」の自動判定に使います)。入手先: [gyan.dev の Windows 用ビルド](https://www.gyan.dev/ffmpeg/builds/)。**「full」版**を選んでください(ARIB字幕を入れるのに必要な部品は、full版にだけ入っています)。zipの中の `bin` フォルダにある `ffmpeg.exe` と `ffprobe.exe` を使います |
+| rplsinfo.exe | 同じフォルダに置くか、PATHを通す(番組名・チャンネル・放送日の取得に使います)。入手先: [tsukumijima/rplsinfo](https://github.com/tsukumijima/rplsinfo) の Releases にあるzipの中の `rplsinfo.exe` |
 | NVIDIAのGPU | 既定のエンコード設定は `hevc_nvenc`(NVIDIAのハードウェアエンコード)を使います |
 
 ## 2. 起動のしかた
