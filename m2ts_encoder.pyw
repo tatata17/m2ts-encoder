@@ -3042,7 +3042,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.04.11"
+APP_VERSION = "2026.11.05.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -7691,7 +7691,7 @@ class App(tk.Tk):
         if self.encoding_running:
             messagebox.showinfo("アップデート", "エンコード中は更新できません。終わってからやり直してください。", parent=self)
             return False
-        notes = str(info.get("notes", "")).strip() or "(更新内容の記載なし)"
+        notes = str(info.get("notes", "")).strip() or "(細かい修正です。詳しくは、更新履歴(GitHubの CHANGELOG.md)を見てください)"
         if not messagebox.askyesno(
             "アップデート",
             f"新しい版があります。\n\n現在: {APP_VERSION}\n最新: {info['version']}\n\n【更新内容】\n{notes}\n\n"
