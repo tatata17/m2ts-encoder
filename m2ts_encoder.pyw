@@ -94,7 +94,7 @@ import urllib.request
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog, scrolledtext
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 
 def get_script_dir() -> str:
@@ -115,6 +115,18 @@ def find_rplsinfo() -> Optional[str]:
         if os.path.isfile(candidate):
             return candidate
 
+    return None
+
+
+def find_tssplitter() -> Optional[str]:
+    """TsSplitter.exe のパスを探す(スクリプトと同じフォルダ優先、次に PATH)"""
+    same_dir = os.path.join(get_script_dir(), "TsSplitter.exe")
+    if os.path.isfile(same_dir):
+        return same_dir
+    for path_dir in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = os.path.join(path_dir, "TsSplitter.exe")
+        if os.path.isfile(candidate):
+            return candidate
     return None
 
 
@@ -2873,6 +2885,7 @@ MENU_TIPS = {
     "再生ソフトを選ぶ": "右クリックの「再生」や、診断の時刻からの再生に使うソフトを選びます。VLC・mpv・MPC-HC・PotPlayerは、時刻を指定して再生できます。他のソフトは、ファイルを開くだけになります。",
     "再生ソフトの指定を解除": "選んだ再生ソフトを解除します。VLCが入っていればVLCで、無ければWindowsの既定のアプリで開きます。",
     "常にCUDAデコードで変換": "ONにすると、おまかせ・モノラル二か国語の分離など、どのエンコード設定でもCUDA(GPU)でデコードします。VLCなどのプレーヤーでは出ないノイズが、エンコード後に出る時用です。NVIDIA製GPUが必要です。バッチファイルを直接選んだ場合は対象外です。",
+    "切替のある録画は、TsSplitterで分割してから変換": "ONにすると、録画の途中で本チャンネル⇔サブチャンネルが切り替わっているファイルを見つけて、TsSplitter(番組情報とPMTの切替ごとに分割)で分けてから、エンコードします。分けたファイルは一覧の元の行の下に追加され、元のファイルは残ります。エンコードに失敗したときにも、分割して試しなおします。TsSplitter.exe を、このアプリと同じフォルダ(またはPATHの通った場所)に置いてください。",
     "起動時に更新を確認する": "ONにすると、起動の数秒後に新しい版を確認して、あれば更新の案内を出します。",
     "旧版のバックアップを管理": "アップデートのたびに自動で作られる旧版のバックアップを、一覧・削除・その版に戻す、ができます。",
     "メニューの説明": "メニューの全項目と、その説明を、1つの画面で読めます(絞り込みもできます)。",
@@ -3137,7 +3150,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.06.3"
+APP_VERSION = "2026.11.06.4"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3634,6 +3647,186 @@ def iter_process_lines(stream):
             yield decode_console_bytes(part)
     if buf:
         yield decode_console_bytes(buf)
+
+
+# ----------------------------------------------------------------------
+# 本チャンネル⇔サブチャンネルの切替がある録画の検出と、TsSplitterによる分割
+# (録画の途中でサービスやPMTが変わると、ffmpegが正しく扱えずに失敗することがある)
+# ----------------------------------------------------------------------
+_TS_VIDEO_STREAM_TYPES = (0x01, 0x02, 0x1B, 0x24)
+_TS_SAMPLE_COUNT = 24            # ファイルのこの数の地点を調べる
+_TS_SAMPLE_PACKETS = 8000        # 1地点あたりに読むパケット数(約1.5MB)
+
+
+def _ts_sync_offset(buf: bytes) -> Optional[int]:
+    """188バイト間隔で 0x47 が並ぶ先頭位置を返す(なければ None)"""
+    for i in range(min(188, max(0, len(buf) - 376))):
+        if buf[i] == 0x47 and buf[i + 188] == 0x47 and buf[i + 376] == 0x47:
+            return i
+    return None
+
+
+def _ts_iter_sections(buf: bytes, offset: int, want) -> "Iterator[Tuple[int, bytes]]":
+    """TSパケット列から、want(pid) が真のPIDのセクション(PAT/PMT等)を取り出す"""
+    pending: Dict[int, bytearray] = {}
+    for i in range(offset, len(buf) - 187, 188):
+        if buf[i] != 0x47:
+            continue
+        b1 = buf[i + 1]
+        pid = ((b1 & 0x1F) << 8) | buf[i + 2]
+        if not want(pid):
+            continue
+        afc = (buf[i + 3] >> 4) & 3
+        if not afc & 1:
+            continue
+        p = i + 4
+        if afc & 2:
+            p += 1 + buf[i + 4]
+        if p >= i + 188:
+            continue
+        if b1 & 0x40:  # セクションの先頭
+            start = p + 1 + buf[p]
+            if start >= i + 188:
+                pending.pop(pid, None)
+                continue
+            pending[pid] = bytearray(buf[start:i + 188])
+        else:
+            data = pending.get(pid)
+            if data is None:
+                continue
+            data += buf[p:i + 188]
+        data = pending.get(pid)
+        if data is not None and len(data) >= 3:
+            need = 3 + (((data[1] & 0x0F) << 8) | data[2])
+            if len(data) >= need:
+                yield pid, bytes(data[:need])
+                pending.pop(pid, None)
+
+
+def parse_ts_programs(buf: bytes) -> Dict[int, Tuple[int, ...]]:
+    """TSの断片から {番組番号(サービス): 映像PIDの組} を読み取る(PAT→PMTの順に解釈)"""
+    off = _ts_sync_offset(buf)
+    if off is None:
+        return {}
+    pmt_pids: Dict[int, int] = {}
+    for _pid, sec in _ts_iter_sections(buf, off, lambda pid: pid == 0):
+        if sec[0] != 0x00 or len(sec) < 12:
+            continue
+        for k in range(8, len(sec) - 4 - 3, 4):
+            number = (sec[k] << 8) | sec[k + 1]
+            pid = ((sec[k + 2] & 0x1F) << 8) | sec[k + 3]
+            if number != 0:
+                pmt_pids[pid] = number
+    programs: Dict[int, Tuple[int, ...]] = {}
+    for pid, sec in _ts_iter_sections(buf, off, lambda pid: pid in pmt_pids):
+        if sec[0] != 0x02 or len(sec) < 16:
+            continue
+        number = (sec[3] << 8) | sec[4]
+        pos = 12 + (((sec[10] & 0x0F) << 8) | sec[11])
+        videos = []
+        while pos + 5 <= len(sec) - 4:
+            stype = sec[pos]
+            epid = ((sec[pos + 1] & 0x1F) << 8) | sec[pos + 2]
+            if stype in _TS_VIDEO_STREAM_TYPES:
+                videos.append(epid)
+            pos += 5 + (((sec[pos + 3] & 0x0F) << 8) | sec[pos + 4])
+        if videos:
+            programs[number] = tuple(sorted(videos))
+    return programs
+
+
+def detect_ts_service_change(path: str) -> Tuple[bool, str]:
+    """
+    ファイルの複数の地点でPAT/PMTを調べ、録画の途中で「サービス(本チャンネル/サブチャンネル)」や
+    映像PIDが切り替わっていないかを判定する。(切り替わっていれば True と、その説明)
+    ファイル全体は読まず、離れた地点だけを調べる(短い切替は見逃すことがある)。
+    """
+    try:
+        size = os.path.getsize(path)
+        chunk = 188 * _TS_SAMPLE_PACKETS
+        if size <= chunk * 2:
+            offsets = [0]
+        else:
+            offsets = [(size - chunk) * k // (_TS_SAMPLE_COUNT - 1) for k in range(_TS_SAMPLE_COUNT)]
+        samples: List[Tuple[float, Dict[int, Tuple[int, ...]]]] = []
+        with open(path, "rb") as f:
+            for off in offsets:
+                f.seek(off)
+                progs = parse_ts_programs(f.read(chunk))
+                if progs:
+                    samples.append((off * 100.0 / max(size, 1), progs))
+    except OSError:
+        return False, ""
+    for i in range(len(samples)):
+        for j in range(i + 1, len(samples)):
+            (pa, a), (pb, b) = samples[i], samples[j]
+            common = set(a) & set(b)
+            if not common:
+                return True, (f"ファイルの{pa:.0f}%付近と{pb:.0f}%付近で、サービスが違います"
+                              f"(番組番号 {sorted(a)} → {sorted(b)})")
+            for number in sorted(common):
+                if a[number] != b[number]:
+                    return True, (f"ファイルの{pa:.0f}%付近と{pb:.0f}%付近で、映像のPIDが変わっています"
+                                  f"(番組番号 {number}: {list(a[number])} → {list(b[number])})")
+    return False, ""
+
+
+def run_tssplitter(exe: str, path: str, on_line=None, should_stop=None) -> Tuple[List[str], str]:
+    """
+    TsSplitter で、番組情報とPMTの切替ごとに分割する(-EIT で番組情報を残す。1segは出力しない)。
+    分割後のファイル(元と同じフォルダに、元の名前で始まる .ts)を .m2ts に改名して返す。
+    戻り値: (分割後のファイルのパス一覧, エラーの説明。正常なら空文字)
+    """
+    folder = os.path.dirname(path) or "."
+    stem = os.path.splitext(os.path.basename(path))[0]
+    started = time.time() - 2
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        proc = subprocess.Popen(
+            [exe, "-EIT", "-SEP2", "-1SEG", path],
+            cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            creationflags=creationflags,
+        )
+    except OSError as e:
+        return [], f"TsSplitterを起動できませんでした({e})"
+    try:
+        for line in iter_process_lines(proc.stdout):
+            if on_line and line.strip():
+                on_line(line)
+            if should_stop and should_stop():
+                kill_process_tree(proc)
+                break
+    finally:
+        proc.wait()
+    if should_stop and should_stop():
+        return [], "中断しました"
+    pieces: List[str] = []
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError as e:
+        return [], f"フォルダを読めませんでした({e})"
+    for name in names:
+        if not name.lower().endswith(".ts") or not name.startswith(stem):
+            continue
+        full = os.path.join(folder, name)
+        if os.path.abspath(full) == os.path.abspath(path) or not os.path.isfile(full):
+            continue
+        try:
+            if os.path.getmtime(full) < started:
+                continue
+        except OSError:
+            continue
+        renamed = os.path.splitext(full)[0] + ".m2ts"
+        if not os.path.exists(renamed):
+            try:
+                os.rename(full, renamed)
+                full = renamed
+            except OSError:
+                pass
+        pieces.append(full)
+    if proc.returncode not in (0, None) and not pieces:
+        return [], f"TsSplitterが失敗しました(code {proc.returncode})"
+    return pieces, ""
 
 
 # ----------------------------------------------------------------------
@@ -5662,6 +5855,10 @@ class App(tk.Tk):
         self.force_cuda_var = tk.BooleanVar(value=self.settings.get("force_cuda", "0") == "1")
         settings_menu.add_checkbutton(
             label="常にCUDAデコードで変換", variable=self.force_cuda_var, command=self._on_force_cuda_toggled
+        )
+        self.split_var = tk.BooleanVar(value=self.settings.get("tssplitter_split", "1") == "1")
+        settings_menu.add_checkbutton(
+            label="切替のある録画は、TsSplitterで分割してから変換", variable=self.split_var, command=self._on_split_toggled
         )
         menubar.add_cascade(label="設定", menu=settings_menu)
 
@@ -7805,6 +8002,10 @@ class App(tk.Tk):
             messagebox.showerror("エラー", f"保存できませんでした: {e}")
 
     # ---- アップデート ----
+    def _on_split_toggled(self):
+        self.settings["tssplitter_split"] = "1" if self.split_var.get() else "0"
+        save_settings(self.settings)
+
     def _on_force_cuda_toggled(self):
         self.settings["force_cuda"] = "1" if self.force_cuda_var.get() else "0"
         save_settings(self.settings)
@@ -8284,8 +8485,12 @@ class App(tk.Tk):
                 pass
 
     def _encode_worker(self, iids: List[str]):
-        total = len(iids)
-        for index, iid in enumerate(iids, start=1):
+        work = list(iids)
+        pos = 0
+        while pos < len(work):
+            iid = work[pos]
+            pos += 1
+            index, total = pos, len(work)
             if self.stop_requested:
                 self.encode_queue.put(("stopped",))
                 return
@@ -8307,6 +8512,23 @@ class App(tk.Tk):
 
             self.encode_queue.put(("status", iid, "エンコード中", index, total))
 
+            # 本チャンネル⇔サブチャンネルの切替がある録画は、先にTsSplitterで分割する
+            can_split = self._can_split(data)
+            tool = find_tssplitter() if can_split else None
+            if can_split:
+                changed, detail = detect_ts_service_change(data["path"])
+                if changed:
+                    if tool is None:
+                        self.encode_queue.put(("log", f"[注意] 録画の途中でサービス(本チャンネル/サブチャンネル)が切り替わっています: {detail}"))
+                        self.encode_queue.put(("log", "[注意] TsSplitter.exe が見つからないため分割できません。m2ts_encoder.pyw と同じフォルダに置いてください。このままエンコードします(失敗する場合があります)"))
+                    else:
+                        self.encode_queue.put(("log", f"[分割] 録画の途中でサービス(本チャンネル/サブチャンネル)が切り替わっています: {detail}"))
+                        new_iids = self._split_row(iid, tool)
+                        if new_iids:
+                            work[pos:pos] = new_iids
+                            continue
+
+            self._last_diag_label = None
             try:
                 returncode = self._run_bat(data["path"], data["bat_path"], iid)
                 if self.stop_requested:
@@ -8316,12 +8538,102 @@ class App(tk.Tk):
                 else:
                     status = f"エラー(code {returncode})"
             except Exception as e:
+                returncode = 1
                 status = "エラー"
                 self.encode_queue.put(("log", f"[例外] {e}"))
+
+            # 失敗したときは、切替が見つけられなかっただけかもしれないので、分割して試しなおす
+            failed = (returncode != 0 or self._last_diag_label == "失敗")
+            if failed and not self.stop_requested and tool is not None:
+                self.encode_queue.put(("log", "[分割] エンコードに失敗したため、TsSplitterで分割してから試しなおせるか調べます"))
+                new_iids = self._split_row(iid, tool)
+                if new_iids:
+                    work[pos:pos] = new_iids
+                    continue
 
             self.encode_queue.put(("status", iid, status, index, total))
 
         self.encode_queue.put(("all_done",))
+
+    def _can_split(self, data: dict) -> bool:
+        """この行を、TsSplitterによる分割の対象にしてよいか"""
+        if self.settings.get("tssplitter_split", "1") != "1":
+            return False
+        if data.get("split_from"):
+            return False  # 分割でできたファイルは、もう分割しない
+        return data["path"].lower().endswith((".m2ts", ".ts"))
+
+    def _split_row(self, iid: str, tool: str) -> List[str]:
+        """TsSplitterで分割し、できたファイルを一覧に行として追加する。追加した行のiid一覧を返す(分割しなければ空)"""
+        data = self.row_data[iid]
+        path = data["path"]
+        self.encode_queue.put(("log", f"[分割] TsSplitterで分割します: {os.path.basename(path)}(番組情報とPMTの切替ごと)"))
+        pieces, error = run_tssplitter(
+            tool, path,
+            on_line=lambda line: self.encode_queue.put(("log", f"[分割] {line}")),
+            should_stop=lambda: self.stop_requested,
+        )
+        if error:
+            self.encode_queue.put(("log", f"[分割] {error}。分割せずに進めます"))
+            return []
+        if len(pieces) < 2:
+            # 1本にしかならないなら、分割する意味がない(できたファイルは片付ける)
+            for piece in pieces:
+                try:
+                    os.remove(piece)
+                except OSError:
+                    pass
+            self.encode_queue.put(("log", "[分割] 分割しても1本だったため、分割せずに進めます"))
+            return []
+        rows = []
+        for piece in pieces:
+            info = get_program_info(self.rplsinfo_path, piece) if self.rplsinfo_path else None
+            if info is None:
+                program_name, channel_name, broadcast_date = "(番組情報を取得できませんでした)", "(不明)", ""
+            else:
+                _, program_name, channel_name, broadcast_date = info
+                program_name = program_name if program_name.strip() else "(番組情報を取得できませんでした)"
+                channel_name = channel_name or "(不明)"
+            rows.append({"path": piece, "program_name": program_name, "channel": channel_name,
+                         "broadcast_date": broadcast_date})
+            self.encode_queue.put(("log", f"[分割] → {os.path.basename(piece)}  ({channel_name} / {program_name})"))
+        holder = {"event": threading.Event(), "iids": []}
+        self.encode_queue.put(("addsplit", iid, rows, holder))
+        holder["event"].wait(30)
+        new_iids = holder["iids"]
+        self.encode_queue.put(("split_done", iid, len(new_iids)))
+        self.encode_queue.put(("log", f"[分割] {len(new_iids)}本に分けました。続けて、分けたファイルをエンコードします(元のファイルは残してあります)"))
+        return new_iids
+
+    def _add_split_rows(self, src_iid: str, rows: List[dict]) -> List[str]:
+        """分割でできたファイルを、元の行のすぐ下に追加する(元の行と同じ設定を割り当てる)"""
+        src = self.row_data.get(src_iid, {})
+        try:
+            index = self.tree.index(src_iid) + 1
+        except Exception:
+            index = tk.END
+        order_pos = self._row_order.index(src_iid) + 1 if src_iid in self._row_order else len(self._row_order)
+        new_iids = []
+        for k, r in enumerate(rows):
+            base_name = os.path.basename(r["path"])
+            iid = self.tree.insert(
+                "", index if index == tk.END else index + k,
+                values=(base_name, r["program_name"], r["channel"], r["broadcast_date"], "✕",
+                        src.get("bat_name") or "(未設定)", "待機中", "-"),
+                tags=("converted_no",),
+            )
+            self.row_data[iid] = {
+                "path": r["path"], "program_name": r["program_name"], "channel": r["channel"],
+                "broadcast_date": r["broadcast_date"], "converted": False, "info_source_path": None,
+                "output_path": None, "bat_path": src.get("bat_path"), "bat_name": src.get("bat_name"),
+                "status": "待機中", "diag_label": "-", "diag_issues": [], "split_from": src.get("path"),
+            }
+            self._row_order.insert(order_pos + k, iid)
+            if self.filter_var.get().strip() and not self._row_matches(iid):
+                self.tree.detach(iid)
+            self.results.append((base_name, r["program_name"], r["channel"], r["broadcast_date"], "✕"))
+            new_iids.append(iid)
+        return new_iids
 
     def _run_bat(self, m2ts_path: str, bat_path: str, iid: str) -> int:
         """1件分のエンコード。実行ログは全行そのまま ログ/ フォルダのtxtにも保存する"""
@@ -8757,6 +9069,7 @@ class App(tk.Tk):
                 for seconds, text in entries[:30]:
                     self.encode_queue.write_file(f"#     {seconds:.1f}秒  {text}")
 
+            self._last_diag_label = diag_label
             self.encode_queue.put(("diag", iid, diag_label, diag_issues, output_path))
             self.encode_queue.put(("converted", iid, converted))
         else:
@@ -8791,6 +9104,23 @@ class App(tk.Tk):
                     self.status_var.set(f"エンコード中... ({index}/{total}件) - {status}")
                 elif item[0] == "log":
                     self._append_log(item[1])
+                elif item[0] == "addsplit":
+                    _, src_iid, rows, holder = item
+                    try:
+                        holder["iids"] = self._add_split_rows(src_iid, rows)
+                    finally:
+                        holder["event"].set()
+                elif item[0] == "split_done":
+                    _, src_iid, count = item
+                    if src_iid in self.row_data:
+                        d = self.row_data[src_iid]
+                        d["status"] = f"分割して変換({count}件)"
+                        d["bat_path"] = None
+                        d["bat_name"] = None
+                        d["diag_label"] = "-"
+                        d["diag_issues"] = []
+                        self.diagnostic_report = [e for e in self.diagnostic_report if e[0] != d["path"]]
+                        self._refresh_row_values(src_iid)
                 elif item[0] == "rowstatus":
                     _, iid, text = item
                     if iid in self.row_data:
