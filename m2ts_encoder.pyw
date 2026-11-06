@@ -3172,7 +3172,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.06.7"
+APP_VERSION = "2026.11.06.8"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3794,28 +3794,30 @@ def detect_ts_service_change(path: str) -> Tuple[bool, str]:
     return False, ""
 
 
-def run_tssplitter(exe: str, path: str, on_line=None, should_stop=None) -> Tuple[List[str], str]:
-    """
-    TsSplitter で、番組情報とPMTの切替ごとに分割する(-EIT で番組情報を残す。1segは出力しない)。
-    分割後のファイル(元と同じフォルダに、元の名前で始まる .ts)を .m2ts に改名して返す。
-    戻り値: (分割後のファイルのパス一覧, エラーの説明。正常なら空文字)
-    """
+def _tssplitter_once(exe: str, path: str, out_dir: Optional[str], on_line, should_stop) -> Tuple[List[str], str]:
+    """TsSplitterを1回実行する。out_dir が None なら元と同じフォルダに出力する。戻り値: (できたファイル, エラーの行)"""
     folder = os.path.dirname(path) or "."
     stem = os.path.splitext(os.path.basename(path))[0]
+    src_ext = os.path.splitext(path)[1]
+    dest_dir = out_dir or folder
     started = time.time() - 2
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    cmd = [exe, "-EIT", "-SEP2", "-1SEG"] + (["-OUT", out_dir] if out_dir else []) + [path]
     try:
         proc = subprocess.Popen(
-            [exe, "-EIT", "-SEP2", "-1SEG", path],
-            cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cmd, cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             creationflags=creationflags,
         )
     except OSError as e:
         return [], f"TsSplitterを起動できませんでした({e})"
+    error_line = ""
     try:
         for line in iter_process_lines(proc.stdout):
-            if on_line and line.strip():
-                on_line(line)
+            if line.strip():
+                if line.lstrip().lower().startswith("error"):
+                    error_line = line.strip()
+                if on_line:
+                    on_line(line)
             if should_stop and should_stop():
                 kill_process_tree(proc)
                 break
@@ -3825,13 +3827,15 @@ def run_tssplitter(exe: str, path: str, on_line=None, should_stop=None) -> Tuple
         return [], "中断しました"
     pieces: List[str] = []
     try:
-        names = sorted(os.listdir(folder))
+        names = sorted(os.listdir(dest_dir))
     except OSError as e:
         return [], f"フォルダを読めませんでした({e})"
     for name in names:
-        if not name.lower().endswith(".ts") or not name.startswith(stem):
+        low = name.lower()
+        # 出力は「元の名前_HD」「元の名前_SD1」など(拡張子は入力と同じ。念のため .ts も拾う)
+        if not (low.endswith(src_ext.lower()) or low.endswith(".ts")) or not name.startswith(stem + "_"):
             continue
-        full = os.path.join(folder, name)
+        full = os.path.join(dest_dir, name)
         if os.path.abspath(full) == os.path.abspath(path) or not os.path.isfile(full):
             continue
         try:
@@ -3839,17 +3843,49 @@ def run_tssplitter(exe: str, path: str, on_line=None, should_stop=None) -> Tuple
                 continue
         except OSError:
             continue
-        renamed = os.path.splitext(full)[0] + ".m2ts"
-        if not os.path.exists(renamed):
-            try:
-                os.rename(full, renamed)
-                full = renamed
-            except OSError:
-                pass
         pieces.append(full)
+    if error_line and not pieces:
+        return [], error_line
     if proc.returncode not in (0, None) and not pieces:
         return [], f"TsSplitterが失敗しました(code {proc.returncode})"
     return pieces, ""
+
+
+def run_tssplitter(exe: str, path: str, on_line=None, should_stop=None) -> Tuple[List[str], str]:
+    """
+    TsSplitter で、番組情報とPMTの切替ごとに分割する(-EIT で番組情報を残す。1segは出力しない)。
+    分割後のファイルは、元と同じフォルダに「元の名前_HD.m2ts」などの名前でできる。
+    出力ファイルを作れなかったとき(日本語のフォルダ名などが原因のことがある)は、半角英数字の
+    一時フォルダに出力してから、元のフォルダへ移す方法でやりなおす。
+    戻り値: (分割後のファイルのパス一覧, エラーの説明。正常なら空文字)
+    """
+    pieces, error = _tssplitter_once(exe, path, None, on_line, should_stop)
+    if not error or "failed on open" not in error:
+        return pieces, error
+    if on_line:
+        on_line("(出力ファイルを作れなかったため、一時フォルダに出力する方法でやりなおします)")
+    tmp_root = tempfile.gettempdir()
+    try:
+        tmp_root.encode("ascii")
+    except UnicodeEncodeError:
+        tmp_root = os.environ.get("SystemDrive", "C:") + os.sep
+    tmp_dir = tempfile.mkdtemp(prefix="m2ts_split_", dir=tmp_root)
+    moved: List[str] = []
+    try:
+        pieces, error = _tssplitter_once(exe, path, tmp_dir, on_line, should_stop)
+        if error:
+            return [], error
+        folder = os.path.dirname(path) or "."
+        for piece in pieces:
+            dest = os.path.join(folder, os.path.basename(piece))
+            try:
+                shutil.move(piece, dest)
+                moved.append(dest)
+            except OSError as e:
+                return [], f"分割したファイルを元のフォルダへ移せませんでした({e})"
+        return moved, ""
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------
@@ -8552,6 +8588,7 @@ class App(tk.Tk):
                             continue
 
             self._last_diag_label = None
+            self._last_cuda_failure = False
             try:
                 returncode = self._run_bat(data["path"], data["bat_path"], iid)
                 if self.stop_requested:
@@ -8567,7 +8604,10 @@ class App(tk.Tk):
 
             # 失敗したときは、切替が見つけられなかっただけかもしれないので、分割して試しなおす
             failed = (returncode != 0 or self._last_diag_label == "失敗")
-            if failed and can_split and not self.stop_requested:
+            if failed and self._last_cuda_failure:
+                self.encode_queue.put(("log", "[注意] CUDA(GPU)でのデコードに失敗しています。録画の切替が原因ではないので、TsSplitterでは分割しません"
+                                              "(メニュー「設定」の「常にCUDAデコードで変換」をOFFにすると、CPUでデコードします)"))
+            elif failed and can_split and not self.stop_requested:
                 tool = tool or self._ensure_tssplitter()
                 if tool is not None:
                     self.encode_queue.put(("log", "[分割] エンコードに失敗したため、TsSplitterで分割してから試しなおせるか調べます"))
@@ -9116,6 +9156,9 @@ class App(tk.Tk):
                     self.encode_queue.write_file(f"#     {seconds:.1f}秒  {text}")
 
             self._last_diag_label = diag_label
+            self._last_cuda_failure = any(
+                ("cuvidCreateDecoder" in l) or ("Failed setup for format cuda" in l) for l in collected_lines
+            )
             self.encode_queue.put(("diag", iid, diag_label, diag_issues, output_path))
             self.encode_queue.put(("converted", iid, converted))
         else:
