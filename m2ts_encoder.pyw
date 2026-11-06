@@ -3172,7 +3172,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.06.5"
+APP_VERSION = "2026.11.06.6"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -8621,18 +8621,14 @@ class App(tk.Tk):
                     pass
             self.encode_queue.put(("log", "[分割] 分割しても1本だったため、分割せずに進めます"))
             return []
+        # 分けたファイルには番組情報が残らないことがあるので、番組名・チャンネル・放送日・名前の取得元は、
+        # 元のファイルのものを使う(同じ名前になるときは、出力に「(2)」「(3)」の連番が付く)
+        info_source = data.get("info_source_path") or path
         rows = []
         for piece in pieces:
-            info = get_program_info(self.rplsinfo_path, piece) if self.rplsinfo_path else None
-            if info is None:
-                program_name, channel_name, broadcast_date = "(番組情報を取得できませんでした)", "(不明)", ""
-            else:
-                _, program_name, channel_name, broadcast_date = info
-                program_name = program_name if program_name.strip() else "(番組情報を取得できませんでした)"
-                channel_name = channel_name or "(不明)"
-            rows.append({"path": piece, "program_name": program_name, "channel": channel_name,
-                         "broadcast_date": broadcast_date})
-            self.encode_queue.put(("log", f"[分割] → {os.path.basename(piece)}  ({channel_name} / {program_name})"))
+            rows.append({"path": piece, "program_name": data["program_name"], "channel": data["channel"],
+                         "broadcast_date": data["broadcast_date"], "info_source_path": info_source})
+            self.encode_queue.put(("log", f"[分割] → {os.path.basename(piece)}"))
         holder = {"event": threading.Event(), "iids": []}
         self.encode_queue.put(("addsplit", iid, rows, holder))
         holder["event"].wait(30)
@@ -8660,7 +8656,7 @@ class App(tk.Tk):
             )
             self.row_data[iid] = {
                 "path": r["path"], "program_name": r["program_name"], "channel": r["channel"],
-                "broadcast_date": r["broadcast_date"], "converted": False, "info_source_path": None,
+                "broadcast_date": r["broadcast_date"], "converted": False, "info_source_path": r.get("info_source_path"),
                 "output_path": None, "bat_path": src.get("bat_path"), "bat_name": src.get("bat_name"),
                 "status": "待機中", "diag_label": "-", "diag_issues": [], "split_from": src.get("path"),
             }

@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.06.5",
+  "version": "2026.11.06.6",
   "file": "m2ts_encoder.pyw",
-  "notes": "TsSplitter.exe をアプリに埋め込みました。別に用意しなくても、切替のある録画を自動で分割してエンコードできます。"
+  "notes": ""
 }
