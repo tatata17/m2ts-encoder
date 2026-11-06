@@ -3172,7 +3172,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.06.6"
+APP_VERSION = "2026.11.06.7"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3676,6 +3676,7 @@ def iter_process_lines(stream):
 # (録画の途中でサービスやPMTが変わると、ffmpegが正しく扱えずに失敗することがある)
 # ----------------------------------------------------------------------
 _TS_VIDEO_STREAM_TYPES = (0x01, 0x02, 0x1B, 0x24)
+SPLIT_JUNK_SECONDS = 5.0         # TsSplitterで分けたファイルが、これ以下の長さならゴミとして削除する
 _TS_SAMPLE_COUNT = 24            # ファイルのこの数の地点を調べる
 _TS_SAMPLE_PACKETS = 8000        # 1地点あたりに読むパケット数(約1.5MB)
 
@@ -8621,6 +8622,19 @@ class App(tk.Tk):
                     pass
             self.encode_queue.put(("log", "[分割] 分割しても1本だったため、分割せずに進めます"))
             return []
+        # 5秒以下の短いファイルは、切替の境目にできたゴミなので削除する(長さが読めないものは残す。全部が短い場合も消さない)
+        lengths = {piece: probe_duration_seconds(piece) for piece in pieces}
+        junk = [pc for pc in pieces if lengths[pc] is not None and lengths[pc] <= SPLIT_JUNK_SECONDS]
+        if len(junk) == len(pieces):
+            junk = []
+        for pc in junk:
+            try:
+                os.remove(pc)
+                self.encode_queue.put(("log", f"[分割] {os.path.basename(pc)} は{lengths[pc]:.1f}秒しかないため、ゴミとして削除しました"))
+            except OSError as e:
+                self.encode_queue.put(("log", f"[分割] {os.path.basename(pc)} を削除できませんでした({e})"))
+        pieces = [pc for pc in pieces if pc not in junk]
+
         # 分けたファイルには番組情報が残らないことがあるので、番組名・チャンネル・放送日・名前の取得元は、
         # 元のファイルのものを使う(同じ名前になるときは、出力に「(2)」「(3)」の連番が付く)
         info_source = data.get("info_source_path") or path
