@@ -9556,7 +9556,6 @@ def set_window_taskbar_identity(tk_window) -> str:
 
 # ----------------------------------------------------------------------
 # 埋め込みの TsSplitter.exe (TsSplitter Ver 1.26。同梱の説明書に「改変や再配布はご自由にどうぞ」とあります)
-# 説明書: third_party/TsSplitter/TsSplitter.txt
 # ----------------------------------------------------------------------
 _TSSPLITTER_SHA256 = "c6569f39d3e3af59707fd0045f4154c129ab737fddc84133f1ffa35eec15f65c"
 _TSSPLITTER_B64 = (
