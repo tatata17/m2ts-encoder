@@ -3172,7 +3172,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.06.8"
+APP_VERSION = "2026.11.07.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3802,10 +3802,12 @@ def _tssplitter_once(exe: str, path: str, out_dir: Optional[str], on_line, shoul
     dest_dir = out_dir or folder
     started = time.time() - 2
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    cmd = [exe, "-EIT", "-SEP2", "-1SEG"] + (["-OUT", out_dir] if out_dir else []) + [path]
+    # TsSplitterGUI で実際に分割できた設定(番組情報及びPMTで分割・ワンセグは出力しない)と同じ呼び方にする。
+    # 番組情報(-EIT)は残さない: 分けたファイルの名前などは元のファイルの情報を使うため、不要
+    cmd = [exe, "-1SEG", "-SEP2"] + (["-OUT", out_dir] if out_dir else []) + [path]
     try:
         proc = subprocess.Popen(
-            cmd, cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             creationflags=creationflags,
         )
     except OSError as e:
@@ -3853,7 +3855,7 @@ def _tssplitter_once(exe: str, path: str, out_dir: Optional[str], on_line, shoul
 
 def run_tssplitter(exe: str, path: str, on_line=None, should_stop=None) -> Tuple[List[str], str]:
     """
-    TsSplitter で、番組情報とPMTの切替ごとに分割する(-EIT で番組情報を残す。1segは出力しない)。
+    TsSplitter で、番組情報とPMTの切替ごとに分割する(1segは出力しない)。
     分割後のファイルは、元と同じフォルダに「元の名前_HD.m2ts」などの名前でできる。
     出力ファイルを作れなかったとき(日本語のフォルダ名などが原因のことがある)は、半角英数字の
     一時フォルダに出力してから、元のフォルダへ移す方法でやりなおす。
