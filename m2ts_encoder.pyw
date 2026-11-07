@@ -3172,7 +3172,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.2"
+APP_VERSION = "2026.11.07.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -8616,17 +8616,18 @@ class App(tk.Tk):
 
             # 失敗したときは、切替が見つけられなかっただけかもしれないので、分割して試しなおす
             failed = (returncode != 0 or self._last_diag_label == "失敗")
-            if failed and self._last_cuda_failure:
-                self.encode_queue.put(("log", "[注意] CUDA(GPU)でのデコードに失敗しています。録画の切替が原因ではないので、TsSplitterでは分割しません"
-                                              "(メニュー「設定」の「常にCUDAデコードで変換」をOFFにすると、CPUでデコードします)"))
-            elif failed and can_split and not self.stop_requested:
+            if failed and can_split and not self.stop_requested:
                 tool = tool or self._ensure_tssplitter()
                 if tool is not None:
-                    self.encode_queue.put(("log", "[分割] エンコードに失敗したため、TsSplitterで分割してから試しなおせるか調べます"))
+                    why = "CUDA(GPU)でのデコードに失敗したため" if self._last_cuda_failure else "エンコードに失敗したため"
+                    self.encode_queue.put(("log", f"[分割] {why}、TsSplitterで分割してから試しなおせるか調べます(録画の途中の切替が原因のことがあります)"))
                     new_iids = self._split_row(iid, tool)
                     if new_iids:
                         work[pos:pos] = new_iids
                         continue
+            if failed and self._last_cuda_failure:
+                self.encode_queue.put(("log", "[注意] CUDA(GPU)でのデコードに失敗しています。"
+                                              "メニュー「設定」の「常にCUDAデコードで変換」をOFFにすると、CPUでデコードします"))
 
             self.encode_queue.put(("status", iid, status, index, total))
 
@@ -8692,8 +8693,8 @@ class App(tk.Tk):
         info_source = data.get("info_source_path") or path
         rows = []
         for piece in pieces:
-            rows.append({"path": piece, "program_name": data["program_name"], "channel": data["channel"],
-                         "broadcast_date": data["broadcast_date"], "info_source_path": info_source})
+            rows.append({"path": piece, "program_name": data.get("program_name", ""), "channel": data.get("channel", ""),
+                         "broadcast_date": data.get("broadcast_date", ""), "info_source_path": info_source})
             self.encode_queue.put(("log", f"[分割] → {os.path.basename(piece)}"))
         holder = {"event": threading.Event(), "iids": []}
         self.encode_queue.put(("addsplit", iid, rows, holder))
