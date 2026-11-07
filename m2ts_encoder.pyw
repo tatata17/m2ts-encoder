@@ -3201,7 +3201,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.8"
+APP_VERSION = "2026.11.07.9"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -9440,6 +9440,8 @@ class App(tk.Tk):
                             self.row_data[iid]["bat_name"] = None
                             self._auto_released += 1
                         self._refresh_row_values(iid)
+                        # やりなおしたファイルに、前回の結果(失敗など)が残らないように入れ替える
+                        self.diagnostic_report = [e for e in self.diagnostic_report if e[0] != self.row_data[iid]["path"]]
                         if diag_label != "OK":
                             source_path = self.row_data[iid]["path"]
                             self.diagnostic_report.append((source_path, output_path, diag_label, diag_issues))
