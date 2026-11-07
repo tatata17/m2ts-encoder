@@ -121,6 +121,35 @@ def find_rplsinfo() -> Optional[str]:
     return None
 
 
+def reveal_in_explorer(path: str) -> None:
+    """
+    エクスプローラーで、ファイルを選択した状態でフォルダを開く(Windows)。
+    「explorer /select, パス」は、パスにカンマ(番組名,日付.mkv のような名前)があると途中で切れて、
+    PCやドキュメントの画面が開いてしまう。そのため、シェルのAPIで、パスをそのまま渡して開く。
+    APIが使えないときは、パス全体を引用符で囲んで explorer に渡す。
+    """
+    path = os.path.normpath(path)
+    try:
+        import ctypes
+        ole32 = ctypes.windll.ole32
+        shell32 = ctypes.windll.shell32
+        ole32.CoInitialize(None)
+        shell32.ILCreateFromPathW.argtypes = [ctypes.c_wchar_p]
+        shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+        shell32.ILFree.argtypes = [ctypes.c_void_p]
+        shell32.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_ulong]
+        pidl = shell32.ILCreateFromPathW(path)
+        if pidl:
+            try:
+                if shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) == 0:
+                    return
+            finally:
+                shell32.ILFree(pidl)
+    except Exception:
+        pass
+    subprocess.Popen('explorer /select,"%s"' % path)
+
+
 def find_tssplitter() -> Optional[str]:
     """TsSplitter.exe のパスを探す(スクリプトと同じフォルダ優先、次に PATH)。なければ None"""
     same_dir = os.path.join(get_script_dir(), "TsSplitter.exe")
@@ -3172,7 +3201,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.4"
+APP_VERSION = "2026.11.07.5"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -4903,7 +4932,7 @@ class DuplicateEncodeWindow(tk.Toplevel):
         p = paths[0]
         try:
             if sys.platform == "win32":
-                subprocess.Popen(["explorer", "/select,", os.path.normpath(p)])
+                reveal_in_explorer(p)
             else:
                 messagebox.showinfo("場所", p, parent=self)
         except OSError as e:
@@ -7047,8 +7076,8 @@ class App(tk.Tk):
 
         if sys.platform == "win32":
             try:
-                # /select, を使うとエクスプローラーでファイルを選択した状態で開ける
-                subprocess.Popen(["explorer", "/select,", path])
+                # ファイルを選択した状態でエクスプローラーを開く(カンマを含む名前にも対応)
+                reveal_in_explorer(path)
             except Exception:
                 try:
                     os.startfile(os.path.dirname(path))
