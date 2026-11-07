@@ -5,166 +5,224 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>m2ts エンコーダー 使い方</title>
 <meta name="description" content="TV録画(.m2ts)を一覧表示・まとめてエンコード・チャンネル別に仕分けできるWindows用ツールの使い方">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <style>
+/* ===== 共通デザイン(3つの使い方ページで同じものを使います) ===== */
 :root{
   --bg:#f6f7f9; --panel:#ffffff; --ink:#1d2430; --muted:#5d6877; --line:#dde2ea;
   --accent:#0f7b8a; --accent-ink:#ffffff; --accent-soft:#e3f3f5; --warn:#fff4dc; --warn-line:#ecd29a;
-  --code:#eef1f5; --shadow:0 1px 2px rgba(20,30,50,.06),0 6px 20px rgba(20,30,50,.05);
+  --code:#eef1f5; --warn-ink:#8a4a10; --shadow:0 1px 2px rgba(20,30,50,.06),0 6px 20px rgba(20,30,50,.05);
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --bg:#0f141b; --panel:#171e28; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
     --accent:#4cc3d3; --accent-ink:#06222a; --accent-soft:#12303a; --warn:#2c2616; --warn-line:#6d5a22;
-    --code:#202a37; --shadow:none;
+    --code:#202a37; --warn-ink:#e9a46f; --shadow:none;
   }
 }
 :root[data-theme="dark"]{
   --bg:#0f141b; --panel:#171e28; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
   --accent:#4cc3d3; --accent-ink:#06222a; --accent-soft:#12303a; --warn:#2c2616; --warn-line:#6d5a22;
-  --code:#202a37; --shadow:none;
+  --code:#202a37; --warn-ink:#e9a46f; --shadow:none;
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:72px}
 body{margin:0;background:var(--bg);color:var(--ink);
-  font:16px/1.85 "Yu Gothic UI","Hiragino Sans","Meiryo",system-ui,sans-serif;-webkit-text-size-adjust:100%}
-a{color:var(--accent)}
-code,kbd{font:.9em/1.4 "Cascadia Mono",Consolas,monospace;background:var(--code);padding:.1em .4em;border-radius:5px}
-pre{background:var(--code);padding:14px 16px;border-radius:10px;overflow:auto;line-height:1.6;font:14px/1.6 "Cascadia Mono",Consolas,monospace}
-pre code{background:none;padding:0}
+  font:16px/1.85 "Yu Gothic UI","Hiragino Sans","Noto Sans JP","Meiryo",system-ui,sans-serif;-webkit-text-size-adjust:100%}
+a{color:var(--accent);text-underline-offset:3px}
+p{margin:10px 0}
+ul,ol{padding-left:1.4em;margin:8px 0}
+li{margin:4px 0}
+code,kbd{font:.9em/1.4 "Cascadia Mono",Consolas,monospace;background:var(--code);border:1px solid var(--line);padding:.08em .4em;border-radius:5px;overflow-wrap:anywhere}
+kbd{border-bottom-width:2px}
+pre{background:var(--code);border:1px solid var(--line);padding:14px 16px;border-radius:10px;overflow:auto;line-height:1.6;font:14px/1.6 "Cascadia Mono",Consolas,monospace}
+pre code{background:none;border:none;padding:0}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px;border-radius:6px}
+
+/* ヘッダー */
 header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--panel) 92%,transparent);
   backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .top-in{max-width:1120px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px}
+.logo{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:700 13px/1 "Cascadia Mono",Consolas,monospace;flex:none}
 .brand{font-weight:700;letter-spacing:.02em;white-space:nowrap}
 .brand small{font-weight:400;color:var(--muted);margin-left:8px}
 .spacer{flex:1}
 .btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);
   padding:8px 16px;border-radius:999px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px;line-height:1.4}
+.btn:hover{filter:brightness(1.08)}
 .btn.ghost{background:transparent;color:var(--accent)}
-.btn:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
-.icon-btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;height:38px;padding:0 14px;cursor:pointer;font-size:14px;white-space:nowrap}
-.logo{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:700 13px/1 "Cascadia Mono",Consolas,monospace;flex:none}
-.toc-btn{display:none;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:10px;height:38px;padding:0 14px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
-nav.toc .tn{display:inline-block;min-width:1.7em;color:var(--muted);font:12.5px/1 "Cascadia Mono",Consolas,monospace}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:12px 0;box-shadow:var(--shadow)}
-.card>summary{cursor:pointer;list-style:none}
-.card>summary::-webkit-details-marker{display:none}
-.card>summary::before{content:"▸";display:inline-block;width:1.2em;color:var(--muted)}
-.card[open]>summary::before{content:"▾"}
-.card .d{font-weight:700;font-size:17px}
-.card .vr{color:var(--muted);font-size:13.5px;margin-left:8px}
-.card ul{margin:8px 0 2px}
-.wrap{max-width:1120px;margin:0 auto;padding:0 16px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
+.icon-btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;height:38px;padding:0 14px;cursor:pointer;font:inherit;font-size:14px;white-space:nowrap}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.toc-btn{display:none;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:10px;height:38px;padding:0 14px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
+
+/* レイアウトと目次 */
+.layout{max-width:1120px;margin:0 auto;padding:0 16px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
 nav.toc{position:sticky;top:72px;align-self:start;max-height:calc(100vh - 90px);overflow:auto;padding:28px 0}
 nav.toc ol{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
+nav.toc li{margin:0}
 nav.toc a{display:block;padding:5px 12px;margin-left:-2px;border-left:2px solid transparent;color:var(--muted);text-decoration:none;font-size:14.5px;line-height:1.5}
 nav.toc a:hover{color:var(--ink)}
 nav.toc a.on{color:var(--accent);border-left-color:var(--accent);font-weight:700}
+nav.toc .tn{display:inline-block;min-width:1.9em;color:var(--muted);font:12.5px/1 "Cascadia Mono",Consolas,monospace}
 main{padding:28px 0 80px;min-width:0}
-.hero{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px 28px 24px;box-shadow:var(--shadow)}
+
+/* ヒーロー(いちばん上の紹介) */
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px 28px 24px;box-shadow:var(--shadow);margin-top:0}
 .hero h1{margin:0 0 6px;font-size:clamp(26px,4.5vw,36px);line-height:1.3}
-.hero p{margin:.4em 0;color:var(--muted)}
-.hero .row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px;align-items:center}
-.ver{font-size:14px;color:var(--muted)}
+.hero>p:not(.note){margin:.4em 0;color:var(--muted)}
 .feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:18px 0 0;padding:0;list-style:none}
-.feat li{background:var(--accent-soft);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6}
+.feat li{background:var(--accent-soft);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6;margin:0}
+.hero .row{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:18px;align-items:center}
+.hero .note{margin-bottom:0}
+.ver{font-size:14px;color:var(--muted)}
+.quick{background:var(--accent-soft);border-radius:12px;padding:12px 18px;margin:16px 0 0}
+.quick>b{display:block;font-size:17px}
+.quick ol{margin:4px 0 0}
+
+/* 章 */
 section{margin-top:44px}
 h2{font-size:24px;margin:0 0 14px;line-height:1.4;padding-bottom:8px;border-bottom:1px solid var(--line)}
 h2 .n{display:inline-block;min-width:1.9em;height:1.9em;line-height:1.9em;text-align:center;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:.7em;margin-right:10px;vertical-align:.12em}
 h3{font-size:18px;margin:26px 0 8px}
-table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:15px}
+
+/* 注意書き: note=ヒント・補足 / warn=注意 */
+.note,.warn{border-radius:12px;padding:12px 16px;margin:16px 0;font-size:15px;border:1px solid var(--line)}
+.note{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+.warn{background:var(--warn);border-color:var(--warn-line)}
+.lb{display:block;margin-bottom:2px}
+.note>.lb{color:var(--accent)}
+.warn>.lb{color:var(--warn-ink)}
+.muted{color:var(--muted)}
+p.muted{font-size:14px}
+
+/* 表(スマホでは1行=1枚のカードになります) */
+.table-wrap{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:15px}
 th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 tr:last-child td{border-bottom:none}
 th{background:var(--accent-soft);white-space:nowrap}
-.scroll{overflow-x:auto}
-.note{background:var(--warn);border:1px solid var(--warn-line);border-radius:12px;padding:12px 16px;margin:16px 0;font-size:15px}
+td:first-child{min-width:8.5em}
+
+/* 手順 */
 .steps{counter-reset:s;list-style:none;padding:0;margin:12px 0}
-.steps>li{counter-increment:s;position:relative;padding:4px 0 10px 44px}
+.steps>li{counter-increment:s;position:relative;padding:4px 0 10px 44px;margin:0}
 .steps>li::before{content:counter(s);position:absolute;left:0;top:3px;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:700}
-ul.tight{padding-left:1.3em}
-ul.tight li{margin:4px 0}
-/* 画面イメージ(説明用の図) */
-.mock{margin:18px 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);font-size:13px;line-height:1.5}
+.steps>li>strong:first-child{display:block}
+
+/* 小さなカード */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;box-shadow:var(--shadow)}
+.card h4{margin:0 0 4px;font-size:15px;color:var(--accent)}
+.card p{margin:0;font-size:14.5px;line-height:1.7}
+
+/* 画面のイメージ図(説明用の図) */
+.mock{margin:18px 0 6px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);font-size:13px;line-height:1.5}
 .mock .bar{background:var(--code);padding:6px 12px;border-bottom:1px solid var(--line);color:var(--muted)}
-.mock .body{padding:12px;display:grid;gap:8px}
-.mock .menu span{margin-right:14px;color:var(--muted)}
-.mock .tabs span{display:inline-block;padding:3px 10px;border:1px solid var(--line);border-radius:6px 6px 0 0;margin-right:4px;color:var(--muted)}
-.mock .tabs span.on{background:var(--accent-soft);color:var(--ink);font-weight:700}
+.mock .muted{color:var(--muted)}
+.mock .b{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:0 9px;background:var(--panel);margin:2px 2px 2px 0;white-space:nowrap}
+.mock .b.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.mock fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:4px 10px 8px;min-width:0}
+.mock legend{padding:0 6px;font-weight:700;color:var(--accent)}
 .mock .list{border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.mock .list div{display:grid;grid-template-columns:1.1fr 2.4fr 1.4fr 1.2fr .8fr;gap:6px;padding:3px 8px;border-bottom:1px solid var(--line)}
+.mock .list div{border-bottom:1px solid var(--line)}
+.mock .list div:last-child{border-bottom:none}
 .mock .list div:first-child{background:var(--code);font-weight:700}
 .mock .list div.sel{background:var(--accent-soft)}
-.mock .list div.ok{background:color-mix(in srgb,#2ea44f 18%,transparent)}
-.mock .list div.ng{background:color-mix(in srgb,#d73a49 12%,transparent)}
-.mock fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:6px 10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.mock legend{padding:0 6px;font-weight:700;color:var(--accent)}
-.mock .b{border:1px solid var(--line);border-radius:5px;padding:1px 9px;background:var(--panel)}
-.mock .b.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
-.mock .logbox{border:1px solid var(--line);border-radius:8px;background:var(--code);color:var(--muted);padding:6px 10px;font-family:Consolas,monospace;font-size:12px}
-.callouts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px}
-.callouts div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:14.5px;line-height:1.7}
-.callouts b{color:var(--accent)}
+.mock .tabs span{display:inline-block;padding:2px 10px;border:1px solid var(--line);border-bottom:none;border-radius:6px 6px 0 0;margin-right:4px;color:var(--muted)}
+.mock .tabs span.on{background:var(--accent-soft);color:var(--ink);font-weight:700}
+.mock-cap{color:var(--muted);font-size:13.5px;margin:4px 0 14px}
+
+/* 更新履歴(日付ごと。新しい日だけ開いておき、古い日は折りたたみ) */
+.day,.fold{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:12px 0;box-shadow:var(--shadow)}
+.day>summary,.fold>summary{cursor:pointer;list-style:none}
+.day>summary::-webkit-details-marker,.fold>summary::-webkit-details-marker{display:none}
+.day>summary::before,.fold>summary::before{content:"▸";display:inline-block;width:1.2em;color:var(--muted)}
+.day[open]>summary::before,.fold[open]>summary::before{content:"▾"}
+.fold>summary{font-weight:700}
+.day .d{font-weight:700;font-size:17px}
+.day .vr{color:var(--muted);font-size:13.5px;margin-left:8px}
+.day .new{font-size:12px;color:var(--accent-ink);background:var(--accent);border-radius:999px;padding:1px 9px;margin-left:8px;font-weight:700}
+.day ul{margin:8px 0 2px}
+.day .tag{font-size:12px;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:0 8px;margin-right:6px;white-space:nowrap}
+
 footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var(--muted);font-size:14px}
+
 @media (max-width:820px){
   .logo{display:none}
-  .wrap{grid-template-columns:1fr;gap:0}
+  .layout{grid-template-columns:1fr;gap:0}
   .toc-btn{display:inline-flex;align-items:center}
   .top-in{gap:8px;padding:8px 12px}
   .btn.ghost{padding:6px 12px;font-size:14px}
   nav.toc{display:none;position:fixed;top:58px;left:10px;right:10px;max-height:72vh;overflow:auto;padding:10px;z-index:30;
     background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
   nav.toc.open{display:block}
-  .brand{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-  .brand small{display:none}
-  .icon-btn{padding:0 10px;font-size:13px}
   nav.toc ol{border:none}
   nav.toc a{border:none;border-radius:8px;margin:0;padding:9px 12px;font-size:16px}
   nav.toc a.on{background:var(--accent-soft)}
-  .hero{padding:20px 18px}
+  .brand{font-size:15px;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .brand small{display:none}
+  .icon-btn{padding:0 10px;font-size:13px}
+  .hero{padding:20px 18px}
+}
+/* スマホでは、表を「1行=1枚のカード」に並べ替える(横に狭くならないように) */
+@media (max-width:640px){
+  .table-wrap{border:none;background:none;overflow:visible}
+  .table-wrap table,.table-wrap tbody,.table-wrap tr,.table-wrap td{display:block;width:100%}
+  .table-wrap tr:first-child{display:none}
+  .table-wrap tr{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 10px;padding:8px 12px;box-shadow:var(--shadow)}
+  .table-wrap td{border:none;padding:3px 0}
+  .table-wrap td:first-child{font-weight:700;padding-top:2px}
+  .table-wrap td[data-label]:not(:first-child)::before{content:attr(data-label);display:block;font-size:12px;color:var(--muted);letter-spacing:.04em}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+
+/* ===== このページだけの部品 ===== */
+.mock .body{padding:12px;display:grid;gap:8px}
+.mock .menu span{margin-right:14px;color:var(--muted)}
+.mock .list div{display:grid;grid-template-columns:1.1fr 2.4fr 1.4fr 1.2fr .8fr;gap:6px;padding:3px 8px}
+.mock .list div.ok{background:color-mix(in srgb,#2ea44f 18%,transparent)}
+.mock .list div.ng{background:color-mix(in srgb,#d73a49 12%,transparent)}
+.mock fieldset{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 10px}
+.mock .logbox{border:1px solid var(--line);border-radius:8px;background:var(--code);color:var(--muted);padding:6px 10px;font-family:Consolas,monospace;font-size:12px}
+@media (max-width:820px){
   .mock .list div{grid-template-columns:1fr 2fr 1.2fr}
   .mock .list div span:nth-child(n+4){display:none}
 }
-@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
 <header class="top">
   <div class="top-in">
-    <button class="toc-btn" id="tocBtn" aria-expanded="false" aria-controls="toc">目次</button>
+    <button class="toc-btn" id="tocBtn" type="button" aria-expanded="false" aria-controls="toc">目次</button>
     <span class="logo" aria-hidden="true">m2</span>
     <div class="brand">m2ts エンコーダー<small>使い方ガイド</small></div>
     <div class="spacer"></div>
     <a class="btn ghost" href="https://github.com/tatata17/m2ts-encoder">GitHub</a>
-    <button class="icon-btn" id="theme" aria-label="ライト/ダークを切り替え" title="ライト/ダークを切り替え">暗い表示</button>
+    <button class="icon-btn" id="theme" type="button" aria-label="ライト/ダークを切り替え" title="ライト/ダークを切り替え">暗い表示</button>
   </div>
 </header>
 
-<div class="wrap">
+<div class="layout">
 <nav class="toc" id="toc" aria-label="目次">
   <ol>
     <li><a href="#about"><span class="tn"></span>はじめに</a></li>
-    <li><a href="#install"><span class="tn">1</span>用意するもの・起動</a></li>
-    <li><a href="#basic"><span class="tn">2</span>基本の流れ</a></li>
-    <li><a href="#presets"><span class="tn">3</span>エンコード設定</a></li>
-    <li><a href="#diag"><span class="tn">4</span>診断とノイズ検査</a></li>
-    <li><a href="#sort"><span class="tn">5</span>チャンネル別に仕分け</a></li>
-    <li><a href="#more"><span class="tn">6</span>その他の機能</a></li>
-    <li><a href="#update"><span class="tn">7</span>アップデート</a></li>
-    <li><a href="#trouble"><span class="tn">8</span>困ったとき</a></li>
-    <li><a href="#files"><span class="tn">9</span>ファイルの置き場所</a></li>
+    <li><a href="#install"><span class="tn">01</span>必要なものと起動</a></li>
+    <li><a href="#basic"><span class="tn">02</span>基本の流れ(3ステップ)</a></li>
+    <li><a href="#presets"><span class="tn">03</span>エンコード設定</a></li>
+    <li><a href="#diag"><span class="tn">04</span>診断とノイズ検査</a></li>
+    <li><a href="#sort"><span class="tn">05</span>チャンネル別に仕分け</a></li>
+    <li><a href="#more"><span class="tn">06</span>その他の機能</a></li>
+    <li><a href="#update"><span class="tn">07</span>更新のしかた</a></li>
+    <li><a href="#trouble"><span class="tn">08</span>困ったとき</a></li>
+    <li><a href="#files"><span class="tn">09</span>ファイルの場所</a></li>
     <li><a href="#history"><span class="tn">10</span>更新履歴</a></li>
   </ol>
 </nav>
 
 <main>
-<section class="hero" id="about" style="margin-top:0">
+<section class="hero" id="about">
   <h1>m2ts エンコーダー</h1>
   <p>TV録画(<code>.m2ts</code> / <code>.rpls</code>)を、<b>一覧表示 → 設定を割り当て → まとめてエンコード → チャンネル別に仕分け</b>できる、Windows用の小さなツールです。<code>m2ts_encoder.pyw</code> 1つだけで動きます。</p>
-  <div class="row">
-    <a class="btn" id="dl" href="https://github.com/tatata17/m2ts-encoder/raw/main/m2ts_encoder.pyw">⬇ m2ts_encoder.pyw をダウンロード</a>
-    <span class="ver" id="ver">最新版を確認中…</span>
-  </div>
-  <p class="note" style="background:var(--accent-soft);border-color:var(--accent)"><b>ヒント:</b> ボタンやチェックボックスにマウスを置いて少し待つと、説明が出ます。メニューの項目は、「ヘルプ → メニューの説明」で、全項目の説明を1つの画面にまとめて読めます。</p>
   <ul class="feat">
     <li>番組名・チャンネル・放送日を一覧表示</li>
     <li>「おまかせ」で音声・字幕・インターレースを自動判定してエンコード</li>
@@ -173,11 +231,16 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>エンコード済みをチャンネル別フォルダへ仕分け</li>
     <li>メニューからワンクリックで最新版に更新</li>
   </ul>
+  <div class="row">
+    <a class="btn" id="dl" href="https://github.com/tatata17/m2ts-encoder/raw/main/m2ts_encoder.pyw">⬇ m2ts_encoder.pyw をダウンロード</a>
+    <span class="ver" id="ver"></span>
+  </div>
+  <p class="note"><b class="lb">ヒント</b>ボタンやチェックボックスにマウスを置いて少し待つと、説明(ツールチップ)が出ます。メニューの項目は、「ヘルプ → メニューの説明」で、全項目の説明を1つの画面にまとめて読めます。</p>
 </section>
 
 <section id="install">
-  <h2><span class="n">1</span>用意するもの・起動のしかた</h2>
-  <div class="scroll"><table>
+  <h2><span class="n">01</span>必要なものと起動</h2>
+  <div class="table-wrap"><table>
     <tr><th>もの</th><th>用途</th><th>入手先・備考</th></tr>
     <tr><td>Windows 10 / 11</td><td>動作環境</td><td></td></tr>
     <tr><td>Python 3</td><td>アプリ本体を動かす</td><td>3.9以上を推奨。インストーラーで <b>「Add python.exe to PATH」</b> と、<code>.pyw</code> を関連付ける <b>「py launcher」</b> にチェックを入れてください。</td></tr>
@@ -187,7 +250,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td>TsSplitter.exe <small>(用意不要)</small></td><td>録画の途中で、本チャンネル⇔サブチャンネルが切り替わるファイルの分割</td><td>アプリに埋め込んであり、必要になったときに同じフォルダへ自動で取り出します。自分で置いたものがあれば、そちらを使います。</td></tr>
     <tr><td>tkinterdnd2 <small>(任意)</small></td><td>「縦横比を直す」へのドラッグ&amp;ドロップ</td><td>使いたい場合だけ、コマンドプロンプトで <code>pip install tkinterdnd2</code> を実行します。入れなくても、ほかの機能はすべて使えます。</td></tr>
   </table></div>
-  <p class="note"><b>入れるもの・入れないもの:</b> 上の表のほかに、Pythonの追加ライブラリ(<code>pip install</code>)は必要ありません(<code>tkinterdnd2</code> は任意)。Pythonのインストーラーでは「tcl/tk」のチェックを外さないでください(画面の表示に使います)。</p>
+  <p class="note"><b class="lb">入れるもの・入れないもの</b>上の表のほかに、Pythonの追加ライブラリ(<code>pip install</code>)は必要ありません(<code>tkinterdnd2</code> は任意)。Pythonのインストーラーでは「tcl/tk」のチェックを外さないでください(画面の表示に使います)。</p>
   <p class="note">「PATHを通す」が分からない場合は、ffmpeg と rplsinfo を <code>m2ts_encoder.pyw</code> と<b>同じフォルダに置く</b>だけで動きます。PATHの設定のしかたは、<a href="https://qiita.com/shuhey/items/7ee0d25f14a997c9e285" target="_blank" rel="noopener">こちらの解説(Qiita)</a>が参考になります。</p>
   <ol class="steps">
     <li><code>m2ts_encoder.pyw</code> をダウンロードして、好きなフォルダ(録画ファイルのあるフォルダでも可)に置く</li>
@@ -195,16 +258,16 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li><code>m2ts_encoder.pyw</code> を<b>ダブルクリック</b>(コマンドプロンプトは開きません)</li>
     <li>画面上部の「対象フォルダ」がそのフォルダになり、自動でスキャンが始まります</li>
   </ol>
-  <p class="note">「ログ」フォルダは <code>m2ts_encoder.pyw</code> と同じ場所に、「仕分け」フォルダは対象フォルダの下(既定は <code>m2ts_encoder.pyw</code> と同じ場所)に作られます。</p>
-  <div class="note" style="background:var(--accent-soft);border-color:var(--accent)">
-    <b>一覧に何も出ないときは「サブフォルダも検索する」にチェック!</b><br>
+  <p class="note">「ログ」フォルダは <code>m2ts_encoder.pyw</code> と同じ場所に、「仕分け」フォルダは対象フォルダ(初めは <code>m2ts_encoder.pyw</code> のあるフォルダ)の下に作られます。</p>
+  <div class="note">
+    <b class="lb">一覧に何も出ないときは「サブフォルダも検索する」にチェック!</b>
     ブルーレイレコーダー等の録画は、<code>〇〇/STREAM/00001.m2ts</code> のように<b>フォルダの奥</b>に入っていることが多く、チェックが無いと、このフォルダ<b>直下</b>しか探しません。
     直下に無くてサブフォルダに録画があるときは、スキャン後に「ONにしますか?」と確認が出ます。この設定は、次回起動時も覚えています。
   </div>
 </section>
 
 <section id="basic">
-  <h2><span class="n">2</span>基本の流れ(3ステップ)</h2>
+  <h2><span class="n">02</span>基本の流れ(3ステップ)</h2>
   <p>画面は、上から「<b>① 対象を選ぶ → ② 設定を決める → ③ 実行</b>」の順に並んでいます。</p>
 
   <div class="mock" role="img" aria-label="アプリ画面のイメージ図">
@@ -226,10 +289,10 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
       <div class="logbox">[自動判定] 音声 2本 / 字幕 1本 / インターレース扱い(bwdif) → 出力は MKV</div>
     </div>
   </div>
-  <p style="color:var(--muted);font-size:14px;margin-top:-6px">※ 実際の画面を単純化した説明用の図です。緑=変換済み、赤=未変換です。</p>
+  <p class="mock-cap">※ 実際の画面を単純化した説明用の図です。緑=変換済み、赤=未変換です。</p>
 
   <h3>① 対象を選ぶ</h3>
-  <ul class="tight">
+  <ul>
     <li><b>クリック</b>で選択、<b>Ctrl+クリック</b>で1行ずつ追加、<b>Shift+クリック</b>で範囲選択(エクスプローラーと同じ操作感)。矢印キーやShift+矢印キーも使えます。</li>
     <li><b>全選択 / 選択解除</b>ボタン。</li>
     <li><b>チャンネルで選択</b>: プルダウンでチャンネルを選び「このチャンネルを選択」を押すと、そのチャンネルの未変換ファイルがまとめて選ばれます。「変換済みも含める」にチェックすると変換済みも対象になります。</li>
@@ -247,32 +310,32 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
   <p class="note">割り当てた設定は、エンコードが終わると自動で解除されます。うっかり再エンコードしないための仕組みです。</p>
 
   <h3>③ 実行</h3>
-  <ul class="tight">
+  <ul>
     <li><b>「エンコード開始」</b>で、設定を割り当てた行を、一覧の上から順に1つずつエンコードします。</li>
     <li><b>「中断」</b>で止められます。実行中のffmpegもまとめて停止し、未完成の出力は削除します(合体の途中で止めた場合は、1回目の完成品を残します)。</li>
     <li><b>「エンコード後にノイズ検査する」</b>: エンコード後に元のm2tsをソフト/CUDAの両方でデコードして比べ、ノイズの有無を番組情報のCSVに記録します(NVIDIAのGPUが必要です)。</li>
-    <li>画面下の<b>「実行ログ」</b>に経過が出ます(▼で折りたたみ可)。ログはエンコードごとに「ログ」フォルダへ自動保存されます。</li>
+    <li>画面下の<b>「実行ログ」</b>に経過が出ます(▼で折りたたみ可)。ログは「ログ」フォルダに自動で保存されます(既定は1つのtxtに追記)。</li>
   </ul>
   <p>出力は元のm2tsと同じフォルダに、次の名前で保存されます。同名のファイルがあるときは上書きせず <code>(2)</code> を付けます。</p>
   <pre><code>番組名,放送日.mkv (または .mp4)     例: アニメ「〇〇」#1,20260307.mkv</code></pre>
 </section>
 
 <section id="presets">
-  <h2><span class="n">3</span>エンコード設定</h2>
+  <h2><span class="n">03</span>エンコード設定</h2>
   <p>メニュー「設定」→「エンコード設定...」で、チェックボックスから設定を作れます。</p>
   <h3>おまかせ(推奨)</h3>
   <p>ファイルごとにffprobeで中身を調べ、次を自動で決めます。</p>
-  <ul class="tight">
+  <ul>
     <li>空の字幕・存在しない音声を外す</li>
     <li>解説放送の音声(2本目が極端に少ない場合)を判定し、タイトル「解説放送」を付ける</li>
     <li>映像より先に途切れる音声・字幕、まばらな字幕(間が5分以上空く)は、エンコード後に元のm2tsから合体する(同時に入れるとエンコードが止まるため)</li>
     <li>インターレース / プログレッシブを判定(CATVの60pはインターレース解除なし)</li>
-    <li>CATV(カートゥーン等)のモノラル二か国語を、主音声 / 副音声 / 主+副に分離</li>
+    <li>CATV(ケーブルテレビ)のモノラル二か国語を、主音声 / 副音声 / 主+副に分離</li>
     <li>出力形式(字幕があればMKV、なければMP4)</li>
   </ul>
   <h3>エンコーダー(NVIDIAのGPUが無いとき)</h3>
   <p>メニュー「設定」→「エンコーダー(映像の圧縮に使うもの)」で選びます。エンコード設定(プリセット)にだけ効きます。</p>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <tr><th>選択肢</th><th>説明</th></tr>
     <tr><td>自動(既定)</td><td>NVIDIA → Intel → AMD → CPU の順に、使える最初のものを選びます。起動時に、短い映像を実際にエンコードして、使えるかを調べます。</td></tr>
     <tr><td>NVIDIA(hevc_nvenc)</td><td>速い。NVIDIAのGPUが必要です。</td></tr>
@@ -280,7 +343,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td>AMD(hevc_amf)</td><td>AMDのGPU。</td></tr>
     <tr><td>CPU(libx265)</td><td>どの環境でも動きますが、遅いです。</td></tr>
   </table></div>
-  <ul class="tight">
+  <ul>
     <li>「使えるエンコーダーを調べる...」で、どれが使えるかを確認できます。</li>
     <li>画質の値(QP)は、各エンコーダーの目安に換算します(CPUは QP−4 の CRF など)。エンコーダーによって、同じ値でも画質・ファイルの大きさは少し変わります。</li>
     <li>CUDAデコード(「常にCUDAデコードで変換」やノイズ検査)は、NVIDIAのGPU専用です。NVIDIA以外では、使わずに(ノイズ検査は実施せずに)進みます。</li>
@@ -291,62 +354,62 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 </section>
 
 <section id="diag">
-  <h2><span class="n">4</span>診断とノイズ検査</h2>
-  <ul class="tight">
+  <h2><span class="n">04</span>診断とノイズ検査</h2>
+  <ul>
     <li>エンコードのたびに、ffmpegのログを自動解析して <b>OK / 要確認 / 失敗</b> を判定します。</li>
     <li>一覧の「エンコード診断」列、または行を右クリック →「エンコード診断を見る」で、問題のあった時刻を確認できます。その時刻から再生して見比べられます(VLC・mpv・MPC-HC・PotPlayerは時刻を指定して再生できます。他のソフトは、ファイルを開くだけになります)。</li>
     <li>録画の先頭・末尾に出る無害なエラーや、一定間隔で出る無害な警告は無視します。</li>
     <li>メニュー「ログ」→「エンコード診断結果を表示(全件)」で、全ファイルの診断を一覧できます。</li>
     <li><b>ノイズ検査</b>: 元のm2tsをソフト/CUDAでデコードして比較し、結果を番組情報のCSVに追記します(NVIDIAのGPUが必要。無い環境では、実施せずに進みます)。</li>
   </ul>
-  <p class="note">「要確認」でも、録画そのものが壊れている場合は直せません。VLCなどのプレーヤーで、元のm2tsと出力の両方を見比べて、元が壊れていないか確かめてください。</p>
+  <p class="warn">「要確認」でも、録画そのものが壊れている場合は直せません。VLCなどのプレーヤーで、元のm2tsと出力の両方を見比べて、元が壊れていないか確かめてください。</p>
 </section>
 
 <section id="sort">
-  <h2><span class="n">5</span>チャンネル別に仕分け</h2>
+  <h2><span class="n">05</span>チャンネル別に仕分け</h2>
   <p>エンコード済みのmkv/mp4と番組情報のCSVを、チャンネル名のフォルダへまとめます。</p>
-  <pre><code>(アプリと同じ場所)/仕分け/チャンネル名/番組名,放送日.mkv
-                                       番組名,放送日.csv</code></pre>
-  <ul class="tight">
+  <pre><code>(対象フォルダ)/仕分け/チャンネル名/番組名,放送日.mkv
+                                   番組名,放送日.csv</code></pre>
+  <ul>
     <li>上のタブ「<b>エンコード済み(mkv/mp4)</b>」では、m2tsが無くなったmkv/mp4も、CSVのチャンネル名を読んで仕分けられます。</li>
     <li>「選択した行をチャンネル別に仕分け」「未仕分けをすべて仕分け」のボタンで実行します。メニュー「ツール」→「仕分け」からも実行できます。</li>
   </ul>
 </section>
 
 <section id="more">
-  <h2><span class="n">6</span>その他の機能</h2>
-  <div class="callouts">
-    <div><b>変換済みm2tsを削除</b><br>メニュー「ツール」。変換済み(mkv/mp4がある)の元m2tsをまとめて削除します。mkv/mp4は削除しません。ノイズ検査が未完了・中断のものは対象になりません。</div>
-    <div><b>作品ごとに仕分け</b><br>メニュー「ツール」→「仕分け」。「まとめて仕分け(チャンネル別→作品ごと)」なら、チャンネル別の仕分けのあと、続けてこの画面が開きます。仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。ファイルごとに移動先を選べ、直前の1回は元に戻せます。作品名は、同じ放送局の他の番組名と見比べて、複数の回に共通する名前(空白を含めて)を自動で提案します(1本だけの番組は動かしません)。</div>
-    <div><b>二重にエンコードしたファイルを探して削除</b><br>番組名・放送日・開始時刻が同じ変換済みmkv/mp4を組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。対のcsvも一緒に削除します(ごみ箱には入りません)。</div>
-    <div><b>縦横比を直す</b><br>変換済みmkv/mp4の4:3 / 16:9表示を、再エンコードなしで書き換えます。一覧から選ぶか、ドラッグ&amp;ドロップ(要 <code>pip install tkinterdnd2</code>)で追加します。</div>
-    <div><b>ファイル名の記号を全角に修正</b><br>過去の版で半角記号(<code>;</code> <code>@</code> <code>$</code> など)になったファイル名を、本来の全角へ戻します。</div>
-    <div><b>一覧をCSVに保存</b><br>メニュー「ファイル」から。</div>
-    <div><b>再生ソフトを選ぶ</b><br>メニュー「設定」→「再生ソフトを選ぶ...」。右クリックの「再生」や、診断の時刻からの再生に使うソフトを選びます。未指定のときは、VLCが入っていればVLC、無ければWindowsの既定のアプリで開きます。</div>
-    <div><b>右クリックメニュー</b><br>元のファイルを再生・場所を開く / エンコード後のファイルを再生・場所を開く / エンコード診断 / ノイズ検査 / rplsから番組情報を再取得(BDAV用)。</div>
-    <div><b>ログ</b><br>エンコードのログは、1つのtxt(<code>ログ/まとめ_実行ログ.txt</code>)に自動で追記されます。「ログを管理」で、選んだログを1つのtxtや1件ずつに書き出す・内容を見る・削除できます(AIに渡すときに便利)。1件ずつ別のtxtで保存する方式にも切り替えられます。</div>
-    <div><b>ツールチップ・メニューの説明</b><br>ボタンにマウスを置いて約1.5秒待つと、説明が出ます。メニューの項目は、「ヘルプ → メニューの説明」で一覧できます。</div>
-    <div><b>読み取るフォルダを変える</b><br>画面上の「フォルダを変更...」で、読み取るフォルダを選べます。選んだフォルダは次回も使われ、「このアプリのフォルダに戻す」で既定に戻せます。</div>
-    <div><b>切替のある録画を、TsSplitterで分割してから変換</b><br>メニュー「設定」(最初からON)。録画の途中で本チャンネル⇔サブチャンネルが切り替わるファイルは、そのままだとエンコードに失敗することがあります。エンコードの前にファイルを調べ、切替があれば(サービスの切替のほか、録画の先頭に短い別の映像が混ざっている場合も)、番組情報とPMTの切替ごとに分けてから、分けたファイルをエンコードします。分けたファイルは一覧の元の行の下に追加され、元のファイルは残ります。分けたファイルのうち、5秒以下の短いものは、切替の境目にできたゴミなので自動で削除します。番組情報の切替で、本編と次回予告のように分かれたファイルは、映像の大きさ(解像度)が同じなら、1本につなぎ直してからエンコードします。番組名・放送日は元のファイルのものを使うので、分けたファイルの出力は同じ名前になり、「(2)」「(3)」の連番が付きます。切替を見つけられずに失敗したときも、分割して試しなおします。分割に使う <code>TsSplitter.exe</code> は、アプリに埋め込んであり、初めて必要になったときに、同じフォルダへ取り出します。</div>
-    <div><b>常にCUDAデコードで変換</b><br>メニュー「設定」。VLCなどのプレーヤーでは出ないノイズが、エンコード後に出るときに、ONにするとどのエンコード設定でもCUDA(GPU)でデコードします(NVIDIAのGPUが必要)。</div>
+  <h2><span class="n">06</span>その他の機能</h2>
+  <div class="cards">
+    <div class="card"><h4>変換済みm2tsを削除</h4><p>メニュー「ツール」。変換済み(mkv/mp4がある)の元m2tsをまとめて削除します。mkv/mp4は削除しません。ノイズ検査が未完了・中断のものは対象になりません。</p></div>
+    <div class="card"><h4>作品ごとに仕分け</h4><p>メニュー「ツール」→「仕分け」。「まとめて仕分け(チャンネル別→作品ごと)」なら、チャンネル別の仕分けのあと、続けてこの画面が開きます。仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。ファイルごとに移動先を選べ、直前の1回は元に戻せます。作品名は、同じ放送局の他の番組名と見比べて、複数の回に共通する名前(空白を含めて)を自動で提案します(1本だけの番組は動かしません)。</p></div>
+    <div class="card"><h4>二重にエンコードしたファイルを探して削除</h4><p>番組名・放送日・開始時刻が同じ変換済みmkv/mp4を組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。対のcsvも一緒に削除します(ごみ箱には入りません)。</p></div>
+    <div class="card"><h4>縦横比を直す</h4><p>変換済みmkv/mp4の4:3 / 16:9表示を、再エンコードなしで書き換えます。一覧から選ぶか、ドラッグ&amp;ドロップ(要 <code>pip install tkinterdnd2</code>)で追加します。</p></div>
+    <div class="card"><h4>ファイル名の記号を全角に修正</h4><p>過去の版で半角記号(<code>;</code> <code>@</code> <code>$</code> など)になったファイル名を、本来の全角へ戻します。</p></div>
+    <div class="card"><h4>一覧をCSVに保存</h4><p>メニュー「ファイル」から。</p></div>
+    <div class="card"><h4>再生ソフトを選ぶ</h4><p>メニュー「設定」→「再生ソフトを選ぶ...」。右クリックの「再生」や、診断の時刻からの再生に使うソフトを選びます。未指定のときは、VLCが入っていればVLC、無ければWindowsの既定のアプリで開きます。</p></div>
+    <div class="card"><h4>右クリックメニュー</h4><p>元のファイルを再生・場所を開く / エンコード後のファイルを再生・場所を開く / エンコード診断 / ノイズ検査 / rplsから番組情報を再取得(BDAV用)。</p></div>
+    <div class="card"><h4>ログ</h4><p>エンコードのログは、1つのtxt(<code>ログ/まとめ_実行ログ.txt</code>)に自動で追記されます。「ログを管理」で、選んだログを1つのtxtや1件ずつに書き出す・内容を見る・削除できます(AIに渡すときに便利)。1件ずつ別のtxtで保存する方式にも切り替えられます。</p></div>
+    <div class="card"><h4>ツールチップ・メニューの説明</h4><p>ボタンにマウスを置いて約1.5秒待つと、説明が出ます。メニューの項目は、「ヘルプ → メニューの説明」で一覧できます。</p></div>
+    <div class="card"><h4>読み取るフォルダを変える</h4><p>画面上の「フォルダを変更...」で、読み取るフォルダを選べます。選んだフォルダは次回も使われ、「このアプリのフォルダに戻す」で既定に戻せます。</p></div>
+    <div class="card"><h4>切替のある録画を、TsSplitterで分割してから変換</h4><p>メニュー「設定」(最初からON)。録画の途中で本チャンネル⇔サブチャンネルが切り替わるファイルは、そのままだとエンコードに失敗することがあります。エンコードの前にファイルを調べ、切替があれば(サービスの切替のほか、録画の先頭に短い別の映像が混ざっている場合も)、番組情報とPMTの切替ごとに分けてから、分けたファイルをエンコードします。分けたファイルは一覧の元の行の下に追加され、元のファイルは残ります。分けたファイルのうち、5秒以下の短いものは、切替の境目にできたゴミなので自動で削除します。番組情報の切替で、本編と次回予告のように分かれたファイルは、映像の大きさ(解像度)が同じなら、1本につなぎ直してからエンコードします。番組名・放送日は元のファイルのものを使うので、分けたファイルの出力は同じ名前になり、「(2)」「(3)」の連番が付きます。切替を見つけられずに失敗したときも、分割して試しなおします。分割に使う <code>TsSplitter.exe</code> は、アプリに埋め込んであり、初めて必要になったときに、同じフォルダへ取り出します。</p></div>
+    <div class="card"><h4>常にCUDAデコードで変換</h4><p>メニュー「設定」。VLCなどのプレーヤーでは出ないノイズが、エンコード後に出るときに、ONにするとどのエンコード設定でもCUDA(GPU)でデコードします(NVIDIAのGPUが必要)。</p></div>
   </div>
 </section>
 
 <section id="update">
-  <h2><span class="n">7</span>アップデート</h2>
+  <h2><span class="n">07</span>更新のしかた</h2>
   <p>メニュー「<b>ヘルプ</b>」→「<b>アップデートを確認...</b>」を押します。</p>
   <ol class="steps">
     <li>新しい版があれば、更新内容が表示されます(細かい修正の版では、「詳しくは更新履歴を見てください」と出ます)。</li>
     <li>「はい」を押すと、ダウンロード → 置き換え → 自動で再起動します。</li>
     <li>置き換え前の版は <code>%LOCALAPPDATA%\m2ts_encoder\backup\</code> に自動バックアップされます(最新5個)。</li>
   </ol>
-  <ul class="tight">
+  <ul>
     <li>エンコード中は更新できません。</li>
     <li>起動時の自動確認は、同じメニューの「起動時に更新を確認する」で切り替えられます。新しい版があれば、スキャンの前に案内が出ます。</li>
     <li>ダウンロードしたファイルは、版番号と構文を確認してから置き換えるので、通信が途中で切れても今の版は壊れません。</li>
   </ul>
   <h3>更新しても残るもの・元に戻したいとき</h3>
-  <ul class="tight">
+  <ul>
     <li><b>残るもの:</b> 登録したバッチ、自作のエンコード設定、再生ソフトの指定、対象フォルダ、手で決めた作品名の覚え、ログ、仕分け済みのファイルは、更新しても消えません(アプリの設定は <code>%LOCALAPPDATA%\m2ts_encoder\</code> に、ログと仕分けは別の場所にあるため、<code>.pyw</code> を置き換えても影響しません)。</li>
     <li><b>元に戻すには:</b> メニュー「ヘルプ」→「旧版のバックアップを管理...」で、古い版を選んで「選んだ版に戻す」ができます。不要になったバックアップは、同じ画面でまとめて削除できます(残す本数は変えられます)。</li>
   </ul>
@@ -356,8 +419,8 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 </section>
 
 <section id="trouble">
-  <h2><span class="n">8</span>困ったとき</h2>
-  <div class="scroll"><table>
+  <h2><span class="n">08</span>困ったとき</h2>
+  <div class="table-wrap"><table>
     <tr><th>症状</th><th>対処</th></tr>
     <tr><td>本チャンネル⇔サブチャンネルが切り替わる録画で、エンコードに失敗する</td><td>メニュー「設定」の「切替のある録画は、TsSplitterで分割してから変換」がONか確認する(ONなら、自動で分割してからエンコードします)。ログの「[分割]」の行に経過が出ます</td></tr>
     <tr><td>「rplsinfo.exe が見つかりません」</td><td><code>rplsinfo.exe</code> を <code>m2ts_encoder.pyw</code> と同じフォルダに置く</td></tr>
@@ -366,17 +429,17 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td><code>.pyw</code> をダブルクリックしても開かない</td><td>Pythonを入れ直し、<code>py launcher</code> と <code>.pyw</code> の関連付けにチェックを入れる</td></tr>
     <tr><td>エンコードの途中で止まって見える</td><td>字幕が非常にまばらな録画では、最後の「合体」で元のm2tsを読み進めるため、数分かかることがあります。ディスクの読み込みが動いていれば待ってください。</td></tr>
     <tr><td>診断が「要確認」</td><td>診断の詳細で時刻を確認し、プレーヤー(VLCなど)で元のm2tsと出力の両方を見比べる</td></tr>
-    <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入手先は、上の「用意するもの」を見てください。</td></tr>
+    <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入手先は、上の「必要なもの」を見てください。</td></tr>
     <tr><td>プレーヤー(VLCなど)では出ないノイズが、エンコードした動画に出る</td><td>メニュー「設定」→「常にCUDAデコードで変換」をONにして、もう一度エンコードします(NVIDIAのGPUが必要)。</td></tr>
     <tr><td>更新の案内が出ない</td><td>メニュー「ヘルプ」→「起動時に更新を確認する」がONか確認します。エンコード中は案内を出さず、ログに表示するだけです。</td></tr>
-    <tr><td>ログに「<code>◯◯.mkv を削除できませんでした</code>」と出て、エンコードに失敗する</td><td>そのmkvを開いているソフト(再生ソフトなど)を閉じて、もう一度エンコードします。通常は、前回の失敗や中断で残った <code>番組.m2ts.mkv</code> は、エンコード開始時に自動で削除されます。</td></tr>
+    <tr><td>ログに「<code>〇〇.mkv を削除できませんでした</code>」と出て、エンコードに失敗する</td><td>そのmkvを開いているソフト(再生ソフトなど)を閉じて、もう一度エンコードします。通常は、前回の失敗や中断で残った <code>番組.m2ts.mkv</code> は、エンコード開始時に自動で削除されます。</td></tr>
   </table></div>
 </section>
 
 <section id="files">
-  <h2><span class="n">9</span>ファイルの置き場所</h2>
+  <h2><span class="n">09</span>ファイルの場所</h2>
   <h3>GitHubのリポジトリ</h3>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <tr><th>ファイル</th><th>中身</th></tr>
     <tr><td><code>m2ts_encoder.pyw</code></td><td>アプリ本体(版番号は <code>APP_VERSION</code>)</td></tr>
     <tr><td><code>version.json</code></td><td>最新の版番号と、更新の案内に出す内容(アプリの更新確認が読みます)</td></tr>
@@ -385,34 +448,35 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
   </table></div>
   <h3>アプリが作るファイル</h3>
   <p>アプリが作るファイルの場所です。どれも、消しても録画やエンコード済みファイルには影響しません(設定を消すと、設定が初期状態に戻ります)。</p>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <tr><th>場所</th><th>中身</th></tr>
-    <tr><td><code>m2ts_encoder.pyw</code> と同じフォルダ</td><td><code>ログ/</code>(エンコードのログ。既定は <code>まとめ_実行ログ.txt</code> の1つ)、<code>仕分け/</code>(チャンネル別・作品ごとの仕分け先)。<code>ffmpeg.exe</code> や <code>rplsinfo.exe</code> を置く場所でもあります。</td></tr>
+    <tr><td><code>m2ts_encoder.pyw</code> と同じフォルダ</td><td><code>ログ/</code>(エンコードのログ。既定は <code>まとめ_実行ログ.txt</code> の1つ)。<code>ffmpeg.exe</code> や <code>rplsinfo.exe</code> を置く場所でもあります。</td></tr>
+    <tr><td>対象フォルダの下</td><td><code>仕分け/</code>(チャンネル別・作品ごとの仕分け先)。対象フォルダは、初めは <code>m2ts_encoder.pyw</code> のあるフォルダです。</td></tr>
     <tr><td>録画ファイルの隣</td><td>番組情報とノイズ検査の結果を書いたCSV(<code>番組名.m2ts.csv</code> など)。エンコードしたmkv/mp4も、元のm2tsの隣にできます。</td></tr>
     <tr><td><code>%LOCALAPPDATA%\m2ts_encoder\</code></td><td>設定(JSON)、<code>backup\</code>(旧版のバックアップ)、作品ごとの仕分けを元に戻すための記録。</td></tr>
   </table></div>
-  <p class="note">対象フォルダを「フォルダを変更...」で変えた場合も、ログ・仕分け・ffmpegの置き場所は <code>m2ts_encoder.pyw</code> のフォルダのままです。ただし「仕分け」フォルダだけは、選んだ対象フォルダの下に作られます。</p>
+  <p class="note">対象フォルダを「フォルダを変更...」で変えると、「仕分け」フォルダもその下に作られます。ログと、ffmpeg・rplsinfo の置き場所は、<code>m2ts_encoder.pyw</code> のフォルダのままです。</p>
 </section>
 
 <section id="history">
   <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <div class="card"><span class="d">2026-11-07</span><span class="vr">2026.11.07.1〜2026.11.07.10</span>
-  <ul class="tight">
-    <li>TsSplitterでの分割が、出力ファイルを作れずに失敗することがあったのを修正(TsSplitterGUIで分割できる設定と同じ呼び方にした)</li>
-    <li>TsSplitterで分けたファイル(「_HD」「_HD-1」「_HD-2」…)を、番号の順にエンコードするようにした</li>
-    <li>CUDA(GPU)でのデコードに失敗したときも、録画の途中の切替が原因のことがあるため、TsSplitterで分割して試しなおすようにした</li>
-    <li>録画の先頭に短い別の映像(ゴミ)が混ざっているファイルを、エンコードの前に見つけて、TsSplitterで分割するようにした(サービスもPIDも同じで、映像の時刻だけが巻き戻る場合)。ゴミが5秒以下なら、削除される</li>
+  <div class="day"><span class="d">2026-11-07</span><span class="vr">v2026.11.07.1〜v2026.11.07.10</span><span class="new">最新</span>
+  <ul>
+    <li>TsSplitterでの分割が、出力ファイルを作れずに失敗することがあったのを修正(TsSplitterGUIで分割できる設定と同じ呼び方にしました)</li>
+    <li>TsSplitterで分けたファイル(「_HD」「_HD-1」「_HD-2」…)を、番号の順にエンコードするようにしました</li>
+    <li>CUDA(GPU)でのデコードに失敗したときも、録画の途中の切替が原因のことがあるため、TsSplitterで分割して試しなおすようにしました</li>
+    <li>録画の先頭に短い別の映像(ゴミ)が混ざっているファイルを、エンコードの前に見つけて、TsSplitterで分割するようにしました(サービスもPIDも同じで、映像の時刻だけが巻き戻る場合)。ゴミが5秒以下なら、削除されます</li>
     <li>右クリックの「エンコード後のファイルの場所を開く」(と、他の「場所を開く」)が、ファイル名にカンマを含むと、PCの画面が開いてしまうのを修正</li>
-    <li>TsSplitterで分けたファイルのうち、「_HD-1」「_HD-2」のように番号が続いていて、映像の解像度が同じものは、1本につなぎ直してからエンコードするようにした(番組情報の切替で、本編と次回予告が別のファイルになるのを避けるため)</li>
+    <li>TsSplitterで分けたファイルのうち、「_HD-1」「_HD-2」のように番号が続いていて、映像の解像度が同じものは、1本につなぎ直してからエンコードするようにしました(番組情報の切替で、本編と次回予告が別のファイルになるのを避けるため)</li>
     <li>エンコードに失敗したときに、「番組名,日付.mkv」と「.csv」のゴミファイルが残らないように、失敗した出力を自動で削除するようにしました(分割して再変換する場合も含む)</li>
     <li>TsSplitterで分割したファイルでCUDA(GPU)のデコードに失敗したときは、そのファイルだけCPUデコードで自動的にやりなおすようにしました(通常のファイルは今までどおり自動では切り替えません)</li>
     <li>CPUデコードでやりなおして成功したファイルに、最初のCUDA失敗の診断結果(失敗)が残って表示されていたのを修正しました</li>
     <li>番組名が「(吹)」など「(」で始まる録画が、変換済みでも「未変換」と表示されていたのを修正しました</li>
   </ul>
   </div>
-  <details class="card"><summary><span class="d">2026-11-06</span><span class="vr">2026.11.06.1〜2026.11.06.8・ドキュメント</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-11-06</span><span class="vr">v2026.11.06.1〜v2026.11.06.8・ドキュメント</span></summary>
+  <ul>
     <li>録画の途中で本チャンネル⇔サブチャンネルが切り替わるファイルを、TsSplitterで分割してからエンコードできるようにしました。エンコード前にファイルの数か所を調べて切替を見つけ、番組情報とPMTの切替ごとに分けて、分けたファイルを一覧の元の行の下に追加してエンコードします(元のファイルは残ります)。エンコードに失敗したときも、分割して試しなおします。TsSplitter.exe はアプリに埋め込んであり(作者の説明書で再配布が許されています)、必要になったときに同じフォルダへ取り出します。分けたファイルのうち5秒以下の短いものは、ゴミとして自動で削除します。番組名・放送日は元のファイルのものを使い、同名になる出力には「(2)」「(3)」の連番が付きます。メニュー「設定」でON/OFFできます。(実際の録画での確認は、これからです)</li>
     <li>NVIDIAのGPUが無くても使えるようにしました。メニュー「設定」→「エンコーダー」で、NVIDIA(hevc_nvenc)・Intel(hevc_qsv)・AMD(hevc_amf)・CPU(libx265)を選べます。既定の「自動」は、起動時に短い映像を実際にエンコードして調べ、使える最初のものを選びます。「使えるエンコーダーを調べる」で結果を見られます。画質の値(QP)は各エンコーダーの目安に換算します。CUDAデコードとノイズ検査はNVIDIA専用で、NVIDIA以外では使いません。バッチファイルは、書かれているエンコーダーのまま実行します。(Intel・AMDは、実機での確認がまだできていません)</li>
     <li>一覧の右クリックに、「エンコード後のファイルを再生」「エンコード後のファイルの場所を開く」を追加しました(仕分け済みのファイルも見つけます。まだ変換していない行では、グレーで選べません)。これまでの「ファイルの場所を開く」「再生」は、「元のファイルの場所を開く」「元のファイルを再生」に改名しました。</li>
@@ -423,16 +487,16 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>rplsinfo の入手先を、最新版(v1.5.2)のzipへの直リンクにして、解凍して使うことを明記(サイトとREADME)</li>
   </ul>
   </details>
-  <details class="card"><summary><span class="d">2026-11-05</span><span class="vr">2026.11.05.1〜2026.11.05.2・ドキュメント</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-11-05</span><span class="vr">v2026.11.05.1〜v2026.11.05.2・ドキュメント</span></summary>
+  <ul>
     <li>VLCが無くても使えるようにしました。メニュー「設定」→「再生ソフトを選ぶ」で、右クリックの「再生」や診断の時刻からの再生に使うソフトを選べます(VLC・mpv・MPC-HC・PotPlayerは時刻を指定して再生、他のソフトはファイルを開くだけ)。未指定のときは、VLCが入っていればVLC、無ければWindowsの既定のアプリで開きます。右クリックの「VLCで再生」は「再生」に改名しました。</li>
     <li>更新の案内の「更新内容」は、ユーザーに関わる大きな変更のときだけ書くようにしました。細かい修正の版では、「細かい修正です。詳しくは更新履歴を見てください」と表示します。</li>
     <li>使い方サイトを整理しました。ヒントの枠、必須・任意の区別(tkinterdnd2は任意)、「更新しても残るもの・元に戻したいとき」、「ファイルの置き場所」の一覧、困ったときの項目を追加し、古くなっていた説明(作品名の提案、ログの保存方法)を直しました。</li>
     <li>ffmpeg(gyan.dev の full 版)と rplsinfo の入手先、「PATHを通す」の解説リンクを、サイトとREADMEの「用意するもの」に追記しました。</li>
   </ul>
   </details>
-  <details class="card"><summary><span class="d">2026-11-04</span><span class="vr">2026.11.04.1〜2026.11.04.11</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-11-04</span><span class="vr">v2026.11.04.1〜v2026.11.04.11</span></summary>
+  <ul>
     <li>組み込みのエンコード設定とバッチの名前から、特定のサービス名を外しました(「mp4・モノラル二か国語・yadif」など)。旧い名前で登録されていたバッチは、自動で新しい名前に置き換わります。</li>
     <li>起動時の更新の案内を、スキャンの前に出すようにしました。起動してすぐ更新を確認し、新しい版があれば先に案内を出して、答えたあとでスキャンを始めます(更新の確認に3秒以上かかる場合は待たずにスキャンを始め、終わってから案内を出します)。</li>
     <li>メニューを整理しました。「ツール」では、仕分けを「ツール → 仕分け」にまとめ、「まとめて仕分け(チャンネル別→作品ごと)」(チャンネル別に仕分けた後、続けて作品ごとの画面を開く)・「チャンネル別に仕分け」・「作品ごとに仕分け」を並べました。「ログ」では、「ログを管理」を先頭にし、保存方法の項目を「ログの保存方法」のサブメニューにまとめ、「画面下の実行ログをtxtに保存」に改名しました。長かった項目名は短くし、説明は「ヘルプ → メニューの説明」で読めます。</li>
@@ -442,18 +506,18 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>読み取るフォルダ(対象フォルダ)を、画面上の「フォルダを変更...」で選べるようにしました。選んだフォルダは次回も使われ、「このアプリのフォルダに戻す」で既定(.pywがあるフォルダ)に戻せます。フォルダを.pywのアイコンにドラッグ&amp;ドロップして起動すると、そのフォルダを(記憶せずに)使います。「仕分け」フォルダは、対象フォルダの下に作られます。</li>
   </ul>
   </details>
-  <details class="card"><summary><span class="d">2026-10-30</span><span class="vr">2026.10.30.2〜2026.10.30.12</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-10-30</span><span class="vr">v2026.10.30.2〜v2026.10.30.12</span></summary>
+  <ul>
     <li>ヘルプ →「メニューの説明」を追加。メニューの全項目と説明を、1つの画面で読めます(絞り込みつき)。</li>
     <li>ログの保存方法を選べるようにしました(ログ →「ログの保存方法」)。既定は「1つのtxtにまとめて保存」で、ログ/まとめ_実行ログ.txt に1件ずつ追記します(エンコード中は作業用の一時txtに書き、終わったら追記します。途中でアプリが終わっても、次の起動で追記されます)。従来の「1件ずつ別のtxt」にも戻せます。</li>
     <li>ログ →「ログを管理」を追加。まとめの中と従来の個別txtを一覧にして、絞り込み・並べ替え・「要確認だけ」の表示ができ、選んだログを「1つのtxtに書き出す」「1件ずつ書き出す」「内容を見る」「削除」できます。従来の個別txtを、まとめに取り込むこともできます。保存期間(60日)を過ぎた分は、まとめの中からも自動で削除されます。</li>
     <li>ヘルプ →「旧版のバックアップを管理」を追加。アップデートのたびに自動で作られる旧版のバックアップを、一覧(版・日時・サイズ)で見て、選んで削除・「最新の1本を残して全部削除」・その版に戻す・フォルダを開く、ができます。自動で残す本数(既定5本)も、ここで変えられます。新しい順の判定を、日時で行うようにも直しました。</li>
-    <li>タスクバーのアイコンが、他のpyw(VHSエンコードツールなど)とまとめて表示されてしまう問題を修正。このアプリ専用のID・専用アイコン(フィルムと再生マーク)を付けて、別のアイコンとして表示します。</li>
+    <li>タスクバーのアイコンが、ほかのpywアプリとまとめて表示されてしまう問題を修正。このアプリ専用のID・専用アイコン(フィルムと再生マーク)を付けて、別のアイコンとして表示します。</li>
     <li>起動時の更新確認で、新しい版があれば、更新の案内(更新内容つき)を自動で表示するようにしました(これまではログに出るだけでした)。エンコード中は邪魔をせず、ログとメニュー表示だけにします。スキャン中は、スキャンが終わってから案内を出します。「ヘルプ → 起動時に更新を確認する」のチェックを外せば出なくなります。</li>
   </ul>
   </details>
-  <details class="card"><summary><span class="d">2026-10-29</span><span class="vr">2026.10.29.2〜2026.10.29.8</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-10-29</span><span class="vr">v2026.10.29.2〜v2026.10.29.8</span></summary>
+  <ul>
     <li>ツール →「二重にエンコードしたファイルを探して削除」を追加。変換済みのmkv/mp4から、番組名・放送日・開始時刻が同じものが2本以上あるものを組にして並べ、1本ずつ「残す/削除」を決めてまとめて削除できます(対のcsvも一緒に削除)。番組名・放送日・開始時刻が同じものを組にします。最初は各組で1本だけ残す提案で、長さが違う組は別の放送かもしれないので全部残します。</li>
     <li>コピーした音声が映像より先に書き込まれ、シークすると終盤が無音になる問題を修正。映像の処理が遅れる区間(CM明けのミニ番組など)で、音声だけが映像よりずっと手前に置かれていました。出力の並べ替えを待つ時間を10秒から300秒に延ばしました。すでにできたMKVは、ffmpeg -i 入力.mkv -map 0 -c copy -max_interleave_delta 0 出力.mkv で再エンコードなしに直せます。</li>
     <li>「出力が元の長さより短く終了」の誤判定を修正。あとから音声・字幕を合体した録画で、合体の進捗(途中で終わる英語音声などの位置)を最後の位置として見てしまい、完成品なのに「要確認」になっていました。1回目の到達位置で判断します。</li>
@@ -463,23 +527,23 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>2本目の音声が途中から始まるとき、「解説放送」と間違えないように、始まってからの長さで1本目と比べるようにしました。</li>
   </ul>
   </details>
-  <details class="card"><summary><span class="d">2026-10-28</span><span class="vr">2026.10.28.1〜2026.10.28.2</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-10-28</span><span class="vr">v2026.10.28.1〜v2026.10.28.2</span></summary>
+  <ul>
     <li>同梱の旧バッチで、番組名に「&amp;」などが入っていると、後ろの文字がコマンドとして実行されてしまう問題を修正(番組名を引用符で囲むようにしました)。</li>
     <li>ツール →「作品ごとに仕分け」を追加。仕分け済みの放送局フォルダの中を、作品名のフォルダ(仕分け/放送局名/作品名/)に分けます。別ウインドウで、ファイルごとに移動先を選べます(作品名の長さ指定・名前の手入力・動かさない・放送局の直下へ)。並べ替えと検索、手で決めた名前の記憶、直前1回の「元に戻す」に対応。</li>
     <li>作品フォルダの中のファイルも、変換済みの判定・「エンコード済み」タブ・チャンネル別の仕分けで、仕分け済みとして扱われるようにしました。</li>
   </ul>
   </details>
-  <details class="card"><summary><span class="d">2026-10-25</span><span class="vr">2026.10.25.1〜2026.10.25.3</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-10-25</span><span class="vr">v2026.10.25.1〜v2026.10.25.3</span></summary>
+  <ul>
     <li>ツール →「縦横比を直す」を追加。変換済みmkv/mp4の4:3/16:9表示を、再エンコードなしで書き換えられます(一覧から選ぶ・ファイル追加・ドラッグ&amp;ドロップ)。</li>
     <li>4:3のSD映像(720x480など)が横に伸びる問題を修正。16:9を強制するのはHD映像とCATVの60pだけにしました。</li>
-    <li>音声がmp2(ディズニーXDなど)の録画で、出力ファイルができずに失敗する問題を修正。AAC以外の音声にはAAC用フィルタを付けず、出力はMKVにします。</li>
+    <li>音声がmp2の録画で、出力ファイルができずに失敗する問題を修正。AAC以外の音声にはAAC用フィルタを付けず、出力はMKVにします。</li>
     <li>診断で、この種の失敗を「失敗」と表示するようにしました。</li>
   </ul>
   </details>
-  <details class="card"><summary><span class="d">2026-10-23</span><span class="vr">2026.10.23.1〜2026.10.23.2</span></summary>
-  <ul class="tight">
+  <details class="day"><summary><span class="d">2026-10-23</span><span class="vr">v2026.10.23.1〜v2026.10.23.2</span></summary>
+  <ul>
     <li>一覧が空のとき、「サブフォルダも検索する」を案内するようにしました(設定は記憶されます)。</li>
     <li>README・ガイドサイトに説明を追加。</li>
     <li>GitHubで公開。ソフト名を m2ts_info_viewer から m2ts_encoder に変更(設定は自動で引き継ぎ)。</li>
@@ -489,57 +553,95 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 </section>
 
 <footer>
-  <a href="https://github.com/tatata17/m2ts-encoder">github.com/tatata17/m2ts-encoder</a> ・ このページは <code>docs/index.html</code> から公開されています
+  <a href="https://github.com/tatata17/m2ts-encoder">GitHub リポジトリ</a> ・ 不具合やご要望は <a href="https://github.com/tatata17/m2ts-encoder/issues">Issues</a> へ
 </footer>
 </main>
 </div>
 
+<script>window.DOC={repo:"tatata17/m2ts-encoder",file:"m2ts_encoder.pyw"};</script>
 <script>
 (function(){
+  var C=window.DOC||{};
   var root=document.documentElement;
-  try{var t=localStorage.getItem("theme");if(t)root.setAttribute("data-theme",t);}catch(e){}
-  document.getElementById("theme").addEventListener("click",function(){
-    var dark=root.getAttribute("data-theme")==="dark"||(!root.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme: dark)").matches);
-    var next=dark?"light":"dark";root.setAttribute("data-theme",next);
+  function $(id){return document.getElementById(id);}
+  function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+
+  // 明るい/暗い表示の切り替え(選んだものはこのブラウザに覚える)
+  var themeBtn=$("theme");
+  function isDark(){var t=root.getAttribute("data-theme");return t?t==="dark":matchMedia("(prefers-color-scheme: dark)").matches;}
+  function syncTheme(){themeBtn.textContent=isDark()?"明るい表示":"暗い表示";}
+  themeBtn.addEventListener("click",function(){
+    var next=isDark()?"light":"dark";root.setAttribute("data-theme",next);
     try{localStorage.setItem("theme",next);}catch(e){}
-    setThemeLabel();
+    syncTheme();
   });
-  function setThemeLabel(){
-    var dark=root.getAttribute("data-theme")==="dark"||(!root.getAttribute("data-theme")&&matchMedia("(prefers-color-scheme: dark)").matches);
-    document.getElementById("theme").textContent=dark?"明るい表示":"暗い表示";
-  }
-  setThemeLabel();
-  // スマホの目次(ボタンで開閉)
-  var toc=document.getElementById("toc"),tocBtn=document.getElementById("tocBtn");
+  syncTheme();
+
+  // スマホの目次(ボタンで開閉。項目を押す・外を押す・Esc で閉じる)
+  var toc=$("toc"),tocBtn=$("tocBtn");
   function closeToc(){toc.classList.remove("open");tocBtn.setAttribute("aria-expanded","false");}
   tocBtn.addEventListener("click",function(ev){ev.stopPropagation();var o=toc.classList.toggle("open");tocBtn.setAttribute("aria-expanded",o?"true":"false");});
   toc.addEventListener("click",function(ev){if(ev.target.closest("a"))closeToc();});
   document.addEventListener("click",function(ev){if(!toc.contains(ev.target))closeToc();});
   document.addEventListener("keydown",function(ev){if(ev.key==="Escape")closeToc();});
-  // 目次のハイライト
+
+  // 今読んでいる章を目次で強調
   var links=[].slice.call(document.querySelectorAll("nav.toc a"));
   var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
   if("IntersectionObserver" in window){
     var io=new IntersectionObserver(function(es){es.forEach(function(e){
       if(e.isIntersecting){links.forEach(function(a){a.classList.remove("on");});var a=map[e.target.id];if(a)a.classList.add("on");}
     });},{rootMargin:"-20% 0px -70% 0px"});
-    Object.keys(map).forEach(function(id){var el=document.getElementById(id);if(el)io.observe(el);});
+    Object.keys(map).forEach(function(id){var el=$(id);if(el)io.observe(el);});
   }
-  // 最新版の表示とダウンロード
-  var base="https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/";
-  var ver=document.getElementById("ver");
-  fetch(base+"version.json",{cache:"no-store"}).then(function(r){return r.json();}).then(function(j){
-    ver.textContent="最新版: "+j.version;
-    var n=document.getElementById("notes");
-    if(j.notes){n.innerHTML='<p class="note"><b>最新版の更新内容</b>(バージョン '+j.version.replace(/</g,"&lt;")+')<br>'+String(j.notes).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+'</p>';}
-  }).catch(function(){ver.textContent="";});
-  document.getElementById("dl").addEventListener("click",function(ev){
-    ev.preventDefault();
-    fetch(base+"m2ts_encoder.pyw",{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.blob();}).then(function(b){
-      var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="m2ts_encoder.pyw";document.body.appendChild(a);a.click();
-      setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);
-    }).catch(function(){location.href="https://github.com/tatata17/m2ts-encoder/raw/main/m2ts_encoder.pyw";});
+
+  // 表の各セルに見出しの名前を付ける(スマホのカード表示で使う)
+  [].forEach.call(document.querySelectorAll(".table-wrap table"),function(t){
+    var head=[].map.call(t.rows[0].cells,function(c){return c.textContent.trim();});
+    [].slice.call(t.rows,1).forEach(function(r){[].forEach.call(r.cells,function(c,i){if(head[i])c.setAttribute("data-label",head[i]);});});
   });
+
+  // 最新版の表示
+  var raw="https://raw.githubusercontent.com/"+C.repo+"/main/";
+  var ver=$("ver");
+  fetch(raw+"version.json",{cache:"no-store"}).then(function(r){return r.json();}).then(function(j){
+    ver.textContent="最新版: v"+j.version+(j.date?"("+j.date+")":"");
+    var n=$("notes");
+    if(n&&j.notes){n.innerHTML='<p class="note"><b class="lb">最新版の更新内容(v'+esc(j.version)+')</b>'+esc([].concat(j.notes).join("\n")).replace(/\n/g,"<br>")+'</p>';}
+  }).catch(function(){ver.textContent="";});
+
+  // ダウンロード(そのままだと GitHub が画面に文字を表示してしまうので、ファイルとして保存させる)
+  var dl=$("dl"),fallback="https://github.com/"+C.repo+"/raw/main/"+C.file;
+  dl.addEventListener("click",function(ev){
+    ev.preventDefault();
+    fetch(raw+C.file,{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.blob();}).then(function(b){
+      var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=C.file;document.body.appendChild(a);a.click();
+      setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);
+    }).catch(function(){location.href=fallback;});
+  });
+
+  // 更新履歴(changelog.json から。日付ごとにまとめ、新しい日だけ開く)
+  var box=$("cl");
+  if(box&&C.changelog){
+    fetch(C.changelog,{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(data){
+      var list=Array.isArray(data)?data:(data.releases||[]),days=[],idx={};
+      list.forEach(function(r){var d=r.date||"";if(!(d in idx)){idx[d]=days.length;days.push({date:d,rel:[]});}days[idx[d]].rel.push(r);});
+      box.innerHTML=days.map(function(day,i){
+        var v=day.rel.map(function(r){return "v"+r.version;});
+        var vr=v.length>1?v[v.length-1]+"〜"+v[0]:v[0];
+        var items=[];
+        day.rel.forEach(function(r){
+          var tags=(r.tags||[]).map(function(t){return '<span class="tag">'+esc(t)+'</span>';}).join("");
+          [].concat(r.notes||[]).forEach(function(n,j){items.push("<li>"+(j===0?tags:"")+esc(n)+"</li>");});
+        });
+        var head='<span class="d">'+esc(day.date)+'</span><span class="vr">'+esc(vr)+'</span>'+(i===0?'<span class="new">最新</span>':"");
+        return i===0?'<div class="day">'+head+"<ul>"+items.join("")+"</ul></div>"
+                    :'<details class="day"><summary>'+head+"</summary><ul>"+items.join("")+"</ul></details>";
+      }).join("");
+    }).catch(function(){
+      box.innerHTML='<p>読み込めませんでした。<a href="https://github.com/'+C.repo+'/blob/main/'+C.changelogPath+'">GitHub の更新履歴</a>をご覧ください。</p>';
+    });
+  }
 })();
 </script>
 </body>
