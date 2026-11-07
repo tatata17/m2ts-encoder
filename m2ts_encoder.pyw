@@ -3201,7 +3201,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.5"
+APP_VERSION = "2026.11.07.6"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3894,6 +3894,73 @@ def detect_head_timestamp_reset(path: str) -> Tuple[bool, str]:
                               f"(先頭に別の映像が混ざっている可能性があります)")
         prev = ts
     return False, ""
+
+
+def probe_video_signature(path: str) -> Optional[Tuple[int, int, str]]:
+    """映像の(幅, 高さ, フレームレート)をffprobeで読む。読めなければ None"""
+    ffprobe = find_ffprobe()
+    if not ffprobe:
+        return None
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height,r_frame_rate", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30, creationflags=flags,
+        ).stdout.strip().splitlines()
+        if not out:
+            return None
+        width, height, rate = out[0].split(",")[:3]
+        return int(width), int(height), rate
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def merge_split_pieces(pieces: List[str], log=None) -> List[str]:
+    """
+    TsSplitterで分けたファイルのうち、「同じ種類(_HD同士など)で番号が続いていて、映像の解像度が同じ」ものを、
+    1本につなぎ直す(番組情報の切替で、本編と次回予告が別のファイルに分かれてしまうため)。
+    TSは、ファイルを順に連結するだけでつなげられる。つないだ先のファイルのパス一覧を返す。
+    """
+    groups: List[dict] = []
+    for piece in pieces:
+        tag = _split_piece_sort_key(piece)[0]
+        sig = probe_video_signature(piece)
+        if groups and sig is not None and groups[-1]["sig"] == sig and groups[-1]["tag"] == tag:
+            groups[-1]["files"].append(piece)
+        else:
+            groups.append({"tag": tag, "sig": sig, "files": [piece]})
+    result: List[str] = []
+    for g in groups:
+        files = g["files"]
+        first = files[0]
+        if len(files) > 1:
+            try:
+                original_size = os.path.getsize(first)
+                with open(first, "ab") as out:
+                    try:
+                        for extra in files[1:]:
+                            with open(extra, "rb") as src:
+                                shutil.copyfileobj(src, out, 1 << 20)
+                    except OSError:
+                        out.truncate(original_size)  # 失敗したら、つなぐ前の状態に戻す
+                        raise
+            except OSError as e:
+                if log:
+                    log(f"[分割] ファイルをつなげませんでした({e})。つなげずに、別々にエンコードします")
+                result.extend(files)
+                continue
+            for extra in files[1:]:
+                try:
+                    os.remove(extra)
+                except OSError:
+                    pass
+            if log:
+                names = "・".join(os.path.basename(f) for f in files)
+                w, h, _ = g["sig"]
+                log(f"[分割] {names} は、映像の大きさが同じ({w}x{h})ため、1本につなぎ直しました: {os.path.basename(first)}")
+        result.append(first)
+    return result
 
 
 def _tssplitter_once(exe: str, path: str, out_dir: Optional[str], on_line, should_stop) -> Tuple[List[str], str]:
@@ -8782,6 +8849,7 @@ class App(tk.Tk):
             except OSError as e:
                 self.encode_queue.put(("log", f"[分割] {os.path.basename(pc)} を削除できませんでした({e})"))
         pieces = [pc for pc in pieces if pc not in junk]
+        pieces = merge_split_pieces(pieces, log=lambda line: self.encode_queue.put(("log", line)))
 
         # 分けたファイルには番組情報が残らないことがあるので、番組名・チャンネル・放送日・名前の取得元は、
         # 元のファイルのものを使う(同じ名前になるときは、出力に「(2)」「(3)」の連番が付く)
