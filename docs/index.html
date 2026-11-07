@@ -397,7 +397,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <div class="card"><span class="d">2026-11-07</span><span class="vr">2026.11.07.1〜2026.11.07.6</span>
+  <div class="card"><span class="d">2026-11-07</span><span class="vr">2026.11.07.1〜2026.11.07.7</span>
   <ul class="tight">
     <li>TsSplitterでの分割が、出力ファイルを作れずに失敗することがあったのを修正(TsSplitterGUIで分割できる設定と同じ呼び方にした)</li>
     <li>TsSplitterで分けたファイル(「_HD」「_HD-1」「_HD-2」…)を、番号の順にエンコードするようにした</li>
@@ -405,6 +405,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>録画の先頭に短い別の映像(ゴミ)が混ざっているファイルを、エンコードの前に見つけて、TsSplitterで分割するようにした(サービスもPIDも同じで、映像の時刻だけが巻き戻る場合)。ゴミが5秒以下なら、削除される</li>
     <li>右クリックの「エンコード後のファイルの場所を開く」(と、他の「場所を開く」)が、ファイル名にカンマを含むと、PCの画面が開いてしまうのを修正</li>
     <li>TsSplitterで分けたファイルのうち、「_HD-1」「_HD-2」のように番号が続いていて、映像の解像度が同じものは、1本につなぎ直してからエンコードするようにした(番組情報の切替で、本編と次回予告が別のファイルになるのを避けるため)</li>
+    <li>エンコードに失敗したときに、「番組名,日付.mkv」と「.csv」のゴミファイルが残らないように、失敗した出力を自動で削除するようにしました(分割して再変換する場合も含む)</li>
   </ul>
   </div>
   <details class="card"><summary><span class="d">2026-11-06</span><span class="vr">2026.11.06.1〜2026.11.06.8・ドキュメント</span></summary>

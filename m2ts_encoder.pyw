@@ -3201,7 +3201,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.6"
+APP_VERSION = "2026.11.07.7"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -9299,6 +9299,27 @@ class App(tk.Tk):
                     file_dir, os.path.basename(m2ts_path), program_name, date_digits_hint
                 )
                 output_path = os.path.join(file_dir, output_file_name) if output_file_name else None
+
+            # 失敗した変換の出力(中身のない/壊れたmkv・csv)は名前を付け替えずに片付ける。
+            # 残しておくと「番組名,日付.mkv」というゴミになり、分割後の成功分と名前も衝突する
+            if diag_label == "失敗" and not self.row_data.get(iid, {}).get("reencode_old"):
+                junk = set(new_video_names) | set(new_csv_names)
+                if output_path:
+                    junk.add(os.path.basename(output_path))
+                removed = []
+                for name in sorted(junk):
+                    junk_path = os.path.join(file_dir, name)
+                    # 変換前から存在し更新されていないファイルには触れない(newに含まれるか、決め打ちの出力のみ)
+                    if name in snapshot_before and name not in new_names:
+                        continue
+                    try:
+                        os.remove(junk_path)
+                        removed.append(name)
+                    except OSError:
+                        pass
+                if removed:
+                    self.encode_queue.put(("log", f"[掃除] 失敗した変換の残骸を削除しました: {', '.join(removed)}"))
+                output_path = None
 
             # バッチ内のcmd.exeによる置換に頼らず、Python側で番組名から直接
             # 正しいファイル名を組み立ててリネームする(コードページ/構文問題を回避するため)
