@@ -3201,7 +3201,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.7"
+APP_VERSION = "2026.11.07.8"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -8787,6 +8787,16 @@ class App(tk.Tk):
                     if new_iids:
                         work[pos:pos] = new_iids
                         continue
+            if failed and self._last_cuda_failure and data.get("split_from") and not data.get("cpu_decode") \
+                    and not self.stop_requested:
+                # 分割で作ったファイルは中身が正常でも、映像の形式によってはCUDAが受け付けないことがあるので、
+                # このファイルに限りCPUデコードでやりなおす(通常のファイルは自動では切り替えない)
+                data["cpu_decode"] = True
+                self.encode_queue.put(("log", "[やりなおし] 分割したファイルでCUDA(GPU)のデコードに失敗したため、"
+                                              "このファイルだけCPUでデコードしてやりなおします"))
+                self.encode_queue.put(("status", iid, "待機中", index, total))
+                work.insert(pos, iid)
+                continue
             if failed and self._last_cuda_failure:
                 self.encode_queue.put(("log", "[注意] CUDA(GPU)でのデコードに失敗しています。"
                                               "メニュー「設定」の「常にCUDAデコードで変換」をOFFにすると、CPUでデコードします"))
@@ -8963,7 +8973,11 @@ class App(tk.Tk):
                     )
                     for note in notes:
                         self.encode_queue.put(("log", f"[自動判定] {note}"))
-            if self.settings.get("force_cuda", "0") == "1" and not normalize_encode_options(options)["cuda"]:
+            if self.row_data.get(iid, {}).get("cpu_decode"):
+                options = dict(options)
+                options["cuda"] = False
+                self.encode_queue.put(("log", "[設定] 分割したファイルのやりなおしのため、CPUでデコードします"))
+            elif self.settings.get("force_cuda", "0") == "1" and not normalize_encode_options(options)["cuda"]:
                 options = dict(options)
                 options["cuda"] = True
                 self.encode_queue.put(("log", "[設定] 「常にCUDAデコードで変換」がONのため、CUDAデコードで変換します"))
