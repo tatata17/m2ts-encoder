@@ -341,6 +341,10 @@ def strip_trailing_date(name: str) -> str:
     return _DATE_SUFFIX_PATTERN.sub("", name)
 
 
+# 番組情報が取れなかった行に入れる仮の番組名(照合には使わない。「(吹)」などで始まる本物の番組名とは区別する)
+NO_PROGRAM_INFO = "(番組情報を取得できませんでした)"
+
+
 def normalize_name(name: str) -> str:
     """
     ファイル名比較用の正規化を行う。
@@ -419,7 +423,7 @@ def build_match_candidates(
         name_no_ext, _ext = os.path.splitext(source_base_name)
         candidates.add(normalize_name(name_no_ext))
 
-    if program_name and not program_name.startswith("("):
+    if program_name and program_name != NO_PROGRAM_INFO:
         base_title = strip_trailing_date(program_name)
         candidates.add(normalize_name(program_name))
         candidates.add(normalize_name(base_title))
@@ -3201,7 +3205,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.9"
+APP_VERSION = "2026.11.07.10"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6278,13 +6282,13 @@ class App(tk.Tk):
                         info_source_path = rpls_path
 
             if info is None:
-                program_name = "(番組情報を取得できませんでした)"
+                program_name = NO_PROGRAM_INFO
                 channel_name = "(不明)"
                 broadcast_date = ""
             else:
                 _, program_name, channel_name, broadcast_date = info
                 if not program_name.strip():
-                    program_name = "(番組情報を取得できませんでした)"
+                    program_name = NO_PROGRAM_INFO
                 if not channel_name:
                     channel_name = "(不明)"
 
