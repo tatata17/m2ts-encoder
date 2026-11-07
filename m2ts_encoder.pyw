@@ -3172,7 +3172,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.1"
+APP_VERSION = "2026.11.07.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3794,6 +3794,15 @@ def detect_ts_service_change(path: str) -> Tuple[bool, str]:
     return False, ""
 
 
+def _split_piece_sort_key(path: str) -> Tuple[str, int, str]:
+    """分けたファイルの並び順。「元の名前_HD」「_HD-1」「_HD-2」…の順(「-10」が「-2」より前にならないように数値で比べる)"""
+    name = os.path.splitext(os.path.basename(path))[0]
+    m = re.search(r"_([A-Za-z0-9()]+?)(?:-(\d+))?$", name)
+    if not m:
+        return (name, 0, name)
+    return (m.group(1), int(m.group(2) or 0), name)
+
+
 def _tssplitter_once(exe: str, path: str, out_dir: Optional[str], on_line, should_stop) -> Tuple[List[str], str]:
     """TsSplitterを1回実行する。out_dir が None なら元と同じフォルダに出力する。戻り値: (できたファイル, エラーの行)"""
     folder = os.path.dirname(path) or "."
@@ -3846,6 +3855,7 @@ def _tssplitter_once(exe: str, path: str, out_dir: Optional[str], on_line, shoul
         except OSError:
             continue
         pieces.append(full)
+    pieces.sort(key=_split_piece_sort_key)
     if error_line and not pieces:
         return [], error_line
     if proc.returncode not in (0, None) and not pieces:
