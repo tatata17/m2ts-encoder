@@ -3172,7 +3172,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.3"
+APP_VERSION = "2026.11.07.4"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -3801,6 +3801,70 @@ def _split_piece_sort_key(path: str) -> Tuple[str, int, str]:
     if not m:
         return (name, 0, name)
     return (m.group(1), int(m.group(2) or 0), name)
+
+
+_HEAD_SCAN_BYTES = 16 * 1024 * 1024   # 先頭のこの量だけ調べる
+_HEAD_RESET_MIN_SECONDS = 0.5         # 映像の時刻がこれ以上巻き戻ったら、先頭に別の映像が混ざっているとみなす
+
+
+def _pes_timestamp(pkt_payload: bytes) -> Optional[int]:
+    """PESパケットの先頭から、DTS(なければPTS)を90kHz単位で返す"""
+    if len(pkt_payload) < 19 or pkt_payload[0:3] != b"\x00\x00\x01":
+        return None
+    flags = pkt_payload[7] >> 6
+    def read33(b: bytes) -> int:
+        return (((b[0] >> 1) & 0x07) << 30) | (b[1] << 22) | ((b[2] >> 1) << 15) | (b[3] << 7) | (b[4] >> 1)
+    if flags == 3:
+        return read33(pkt_payload[14:19])
+    if flags == 2:
+        return read33(pkt_payload[9:14])
+    return None
+
+
+def _ts_video_pids(buf: bytes, off: int) -> Dict[int, Tuple[int, ...]]:
+    return parse_ts_programs(buf)
+
+
+def detect_head_timestamp_reset(path: str) -> Tuple[bool, str]:
+    """
+    ファイルの先頭で、映像の時刻(DTS)が大きく巻き戻っていないかを調べる。
+    録画の頭に、前の番組や別のサービスの短い映像(ゴミ)が混ざっていると、
+    その終わりで時刻が巻き戻る。サービスもPIDも同じままのことがあり、PMTを見るだけでは分からない。
+    """
+    try:
+        with open(path, "rb") as f:
+            buf = f.read(_HEAD_SCAN_BYTES)
+    except OSError:
+        return False, ""
+    off = _ts_sync_offset(buf)
+    if off is None:
+        return False, ""
+    video_pids = {pid for vids in _ts_video_pids(buf, off).values() for pid in vids}
+    if not video_pids:
+        return False, ""
+    prev: Optional[int] = None
+    frames = 0
+    for i in range(off, len(buf) - 187, 188):
+        if buf[i] != 0x47 or not (buf[i + 1] & 0x40):
+            continue
+        pid = ((buf[i + 1] & 0x1F) << 8) | buf[i + 2]
+        if pid not in video_pids:
+            continue
+        afc = (buf[i + 3] >> 4) & 3
+        if not afc & 1:
+            continue
+        p = i + 4 + (1 + buf[i + 4] if afc & 2 else 0)
+        ts = _pes_timestamp(buf[p:i + 188])
+        if ts is None:
+            continue
+        frames += 1
+        if prev is not None:
+            back = prev - ts
+            if _HEAD_RESET_MIN_SECONDS * 90000 <= back < 3600 * 90000:
+                return True, (f"ファイルの先頭から約{frames}フレーム目で、映像の時刻が{back / 90000:.1f}秒巻き戻っています"
+                              f"(先頭に別の映像が混ざっている可能性があります)")
+        prev = ts
+    return False, ""
 
 
 def _tssplitter_once(exe: str, path: str, out_dir: Optional[str], on_line, should_stop) -> Tuple[List[str], str]:
@@ -8588,8 +8652,10 @@ class App(tk.Tk):
             tool = None
             if can_split:
                 changed, detail = detect_ts_service_change(data["path"])
+                if not changed:
+                    changed, detail = detect_head_timestamp_reset(data["path"])
                 if changed:
-                    self.encode_queue.put(("log", f"[分割] 録画の途中でサービス(本チャンネル/サブチャンネル)が切り替わっています: {detail}"))
+                    self.encode_queue.put(("log", f"[分割] 録画に切替(サービスの切替、または先頭の別の映像)があります: {detail}"))
                     tool = self._ensure_tssplitter()
                     if tool is None:
                         self.encode_queue.put(("log", "[注意] TsSplitter.exe を用意できないため分割できません。このままエンコードします(失敗する場合があります)"))
