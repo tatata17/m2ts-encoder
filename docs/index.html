@@ -244,14 +244,20 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><th>もの</th><th>用途</th><th>入手先・備考</th></tr>
     <tr><td>Windows 10 / 11</td><td>動作環境</td><td></td></tr>
     <tr><td>Python 3</td><td>アプリ本体を動かす</td><td>3.9以上を推奨。インストーラーで <b>「Add python.exe to PATH」</b> と、<code>.pyw</code> を関連付ける <b>「py launcher」</b> にチェックを入れてください。</td></tr>
-    <tr><td>ffmpeg / ffprobe</td><td>エンコード本体。<code>ffprobe</code> は「おまかせ」の自動判定に使う</td><td><a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の Windows 用ビルド</a>。<b>「full」版</b>を選んでください(ARIB字幕に必要な部品は、full版にだけ入っています)。zipの中の <code>bin</code> フォルダにある <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> を、アプリと同じフォルダに置くか、PATHを通します。</td></tr>
+    <tr><td>ffmpeg / ffprobe</td><td>エンコード本体。<code>ffprobe</code> は「おまかせ」の自動判定に使う</td><td><a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の Windows 用ビルド</a>。<b>「full」版</b>を使います(ARIB字幕に必要な部品は、full版にだけ入っています)。入れかたは、下の「ffmpeg の入れかた」を見てください。</td></tr>
     <tr><td>rplsinfo.exe</td><td>番組名・チャンネル・放送日の取得</td><td><a href="https://github.com/tsukumijima/rplsinfo/releases/download/v1.5.2/rplsinfo152.zip" target="_blank" rel="noopener">rplsinfo152.zip(v1.5.2)</a> をダウンロードして解凍し、中の <code>rplsinfo.exe</code> を取り出します(配布元: <a href="https://github.com/tsukumijima/rplsinfo/releases" target="_blank" rel="noopener">tsukumijima/rplsinfo の Releases</a>)。同じフォルダに置くか、PATHを通します。</td></tr>
     <tr><td>NVIDIAのGPU <small>(推奨)</small></td><td>高速なエンコード(<code>hevc_nvenc</code>)、CUDAデコード、ノイズ検査</td><td><b>無くても使えます。</b>メニュー「設定」→「エンコーダー」で、Intel(QSV)・AMD(AMF)・CPU(libx265)に切り替えられます。「自動」なら、使えるものを自動で選びます(CPUは遅いです)。</td></tr>
     <tr><td>TsSplitter.exe <small>(用意不要)</small></td><td>録画の途中で、本チャンネル⇔サブチャンネルが切り替わるファイルの分割</td><td>アプリに埋め込んであり、必要になったときに同じフォルダへ自動で取り出します。自分で置いたものがあれば、そちらを使います。</td></tr>
     <tr><td>tkinterdnd2 <small>(任意)</small></td><td>「縦横比を直す」へのドラッグ&amp;ドロップ</td><td>使いたい場合だけ、コマンドプロンプトで <code>pip install tkinterdnd2</code> を実行します。入れなくても、ほかの機能はすべて使えます。</td></tr>
   </table></div>
   <p class="note"><b class="lb">入れるもの・入れないもの</b>上の表のほかに、Pythonの追加ライブラリ(<code>pip install</code>)は必要ありません(<code>tkinterdnd2</code> は任意)。Pythonのインストーラーでは「tcl/tk」のチェックを外さないでください(画面の表示に使います)。</p>
-  <p class="note">「PATHを通す」が分からない場合は、ffmpeg と rplsinfo を <code>m2ts_encoder.pyw</code> と<b>同じフォルダに置く</b>だけで動きます。PATHの設定のしかたは、<a href="https://qiita.com/shuhey/items/7ee0d25f14a997c9e285" target="_blank" rel="noopener">こちらの解説(Qiita)</a>が参考になります。</p>
+  <p class="note">rplsinfo.exe も、<code>m2ts_encoder.pyw</code> と同じフォルダに置くのがいちばん簡単です。</p>
+  <h3>ffmpeg の入れかた(PATH とは?)</h3>
+<p>ffmpeg は「full」版を使います。<code>m2ts_encoder.pyw</code> と<b>同じフォルダに置く</b>か、<b>PATH を通す</b>と、アプリが見つけます。PATH が分からないときは、同じフォルダに置くのがいちばん簡単です。</p>
+<p><b>PATH</b> は、「どのフォルダにいても、名前を打つだけでそのソフトを呼び出せる」ようにする Windows の設定です。</p>
+<div class="note"><b class="lb">かんたんな方法(おすすめ)</b>Windows 10/11 なら、<b>コマンドプロンプト</b>(スタートメニューで「cmd」と検索)に次を貼り付けて Enter。full 版が入り、PATH も自動で設定されます。<p><code>winget install Gyan.FFmpeg</code></p>終わったら、<b>コマンドプロンプトを閉じて開き直し</b>、<code>ffmpeg -version</code> と打って版の情報が出れば完了です。m2ts エンコーダーは一度終了して、起動し直してください。ffprobe も一緒に入ります。</div>
+<details class="fold"><summary>手動で入れる方法(上でうまくいかないとき)</summary><ol><li><a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の ffmpeg ビルド</a>から「release builds」の <code>ffmpeg-release-full.7z</code> をダウンロードします(<code>.7z</code> は、7-Zip などで展開します)。</li><li>展開したフォルダを <code>C:\ffmpeg</code> のような分かりやすい場所に置きます(<code>C:\ffmpeg\bin</code> の中に <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> があれば正解)。</li><li><b>PATH を通さない場合</b>は、<code>bin</code> の中の <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> を、<code>m2ts_encoder.pyw</code> と同じフォルダへコピーするだけで終わりです(以降の手順は不要)。</li><li>スタートメニューで「環境変数」と検索 →「システム環境変数の編集」→「環境変数」ボタン。</li><li>上の欄(ユーザー環境変数)の <code>Path</code> を選んで「編集」→「新規」で <code>C:\ffmpeg\bin</code> を追加し、OK を押して閉じます。</li><li>コマンドプロンプトを開き直して、<code>ffmpeg -version</code> と <code>ffprobe -version</code> で確認します。</li></ol><p class="muted">困ったときは「Windows PATH 通す」で検索すると、画像つきの解説がたくさん見つかります。</p></details>
+  <h3>起動のしかた</h3>
   <ol class="steps">
     <li><code>m2ts_encoder.pyw</code> をダウンロードして、好きなフォルダ(録画ファイルのあるフォルダでも可)に置く</li>
     <li>同じフォルダに <code>rplsinfo.exe</code>(と、必要なら <code>ffmpeg.exe</code> / <code>ffprobe.exe</code>)を置く</li>
@@ -429,7 +435,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td><code>.pyw</code> をダブルクリックしても開かない</td><td>Pythonを入れ直し、<code>py launcher</code> と <code>.pyw</code> の関連付けにチェックを入れる</td></tr>
     <tr><td>エンコードの途中で止まって見える</td><td>字幕が非常にまばらな録画では、最後の「合体」で元のm2tsを読み進めるため、数分かかることがあります。ディスクの読み込みが動いていれば待ってください。</td></tr>
     <tr><td>診断が「要確認」</td><td>診断の詳細で時刻を確認し、プレーヤー(VLCなど)で元のm2tsと出力の両方を見比べる</td></tr>
-    <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入手先は、上の「必要なもの」を見てください。</td></tr>
+    <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入れかたは、上の「ffmpeg の入れかた」を見てください。</td></tr>
     <tr><td>プレーヤー(VLCなど)では出ないノイズが、エンコードした動画に出る</td><td>メニュー「設定」→「常にCUDAデコードで変換」をONにして、もう一度エンコードします(NVIDIAのGPUが必要)。</td></tr>
     <tr><td>更新の案内が出ない</td><td>メニュー「ヘルプ」→「起動時に更新を確認する」がONか確認します。エンコード中は案内を出さず、ログに表示するだけです。</td></tr>
     <tr><td>ログに「<code>〇〇.mkv を削除できませんでした</code>」と出て、エンコードに失敗する</td><td>そのmkvを開いているソフト(再生ソフトなど)を閉じて、もう一度エンコードします。通常は、前回の失敗や中断で残った <code>番組.m2ts.mkv</code> は、エンコード開始時に自動で削除されます。</td></tr>
