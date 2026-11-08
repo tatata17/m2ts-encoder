@@ -2916,6 +2916,7 @@ MENU_TIPS = {
     "ファイル名の記号を全角に修正": "古い版で ; @ $ { } ~ ` に置き換わっていた記号を、本来の全角の記号に戻します。",
     "変換済みm2tsを削除...": "変換済み(mkv/mp4がある)のm2tsだけを削除します。ごみ箱には入りません。mkv/mp4は削除しません。",
     "作品ごとに仕分け": "仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。実行前に一覧で確認でき、直前の1回は元に戻せます。",
+    "動画ファイルの変換・取り出し": "mp4/mkvなどの動画を、MP4かMKVに作り直します(字幕・音声はコピー、映像はコピーかH.264/H.265)。映像・音声・字幕だけを取り出して保存することもできます。元のファイルは変更しません。",
     "縦横比を直す": "変換済みのmkv/mp4の表示の縦横比(4:3 / 16:9)だけを、再エンコードなしで書き換えます。",
     "二重にエンコードしたファイルを探して削除": "番組名・放送日・開始時刻が同じ変換済みファイルを組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。",
     "エンコード設定...": "エンコードの設定(プリセット)を作る・編集する画面を開きます。",
@@ -3205,7 +3206,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.07.10"
+APP_VERSION = "2026.11.08.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -4376,6 +4377,835 @@ def probe_video_aspect(path: str) -> Tuple[str, str]:
         except Exception:
             dar = ""
     return size, dar
+
+
+# ----------------------------------------------------------------------
+# 動画ファイル(mp4/mkvなど)の変換と、映像・音声・字幕だけの取り出し(ツールメニュー)
+# ----------------------------------------------------------------------
+MEDIA_INPUT_EXTENSIONS = (".mp4", ".mkv", ".m4v", ".mov", ".ts", ".m2ts", ".mts", ".m2t", ".avi", ".webm",
+                          ".flv", ".wmv", ".mpg", ".mpeg")
+MEDIA_SAME_EXT_OK = (".mp4", ".m4v", ".mov", ".mkv", ".ts", ".m2ts")   # 「元のまま」にできる拡張子
+MP4_FAMILY = (".mp4", ".m4v", ".mov")
+INTERLACED_ORDERS = ("tt", "bb", "tb", "bt")
+# MP4に入れられる音声(これ以外をコピーしようとしたときは、AACに変換する)
+MP4_AUDIO_COPY_OK = ("aac", "ac3", "eac3", "mp3", "mp2", "alac", "flac", "opus")
+MP4_TEXT_SUBTITLES = ("subrip", "srt", "ass", "ssa", "webvtt", "mov_text", "text")
+TS_SUBTITLES = ("dvb_subtitle", "dvb_teletext", "arib_caption", "hdmv_pgs_subtitle")
+_VIDEO_H264_CODEC = {"nvenc": "h264_nvenc", "qsv": "h264_qsv", "amf": "h264_amf", "x265": "libx264"}
+MEDIA_VIDEO_CHOICES = [("copy", "コピー(そのまま)"), ("h264", "H.264 に変換"), ("h265", "H.265(HEVC) に変換")]
+MEDIA_AUDIO_CHOICES = [("copy", "コピー(そのまま)"), ("aac", "AAC に変換"), ("flac", "FLAC に変換"), ("wav", "WAV(PCM) に変換")]
+MEDIA_CONTAINER_CHOICES = [("same", "元のまま"), ("mp4", "MP4"), ("mkv", "MKV")]
+MEDIA_AAC_BITRATES = ("128k", "192k", "256k", "320k")
+MEDIA_DEFAULT_QP = {"h264": 28, "h265": 32}
+
+
+def media_video_args(encoder: str, family: str, qp: int) -> List[str]:
+    """H.264/H.265のエンコーダー指定と画質の引数(画質の数値の目安は、H.265の設定と同じ考え方)"""
+    if family == "h265":
+        return encoder_video_args(encoder, qp)
+    codec = _VIDEO_H264_CODEC.get(encoder, "libx264")
+    if encoder == "x265":
+        return ["-c:v", codec, "-preset", "medium", "-crf", str(max(0, qp - 4))]
+    if encoder == "qsv":
+        return ["-c:v", codec, "-global_quality", str(max(1, qp - 4))]
+    if encoder == "amf":
+        return ["-c:v", codec, "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp), "-qp_b", str(qp)]
+    return ["-c:v", codec, "-qp", str(qp)]
+
+
+def parse_media_probe(text: str) -> Optional[dict]:
+    """ffprobe -of json の出力から、変換に必要な情報(ストリーム一覧・長さ・形式)を取り出す"""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    streams = []
+    for st in data.get("streams", []) or []:
+        if not isinstance(st.get("index"), int):
+            continue
+        tags = st.get("tags") or {}
+        disp = st.get("disposition") or {}
+        streams.append({
+            "index": st["index"],
+            "type": str(st.get("codec_type", "")),
+            "codec": str(st.get("codec_name", "")),
+            "pix_fmt": str(st.get("pix_fmt", "")),
+            "width": st.get("width"), "height": st.get("height"),
+            "field_order": str(st.get("field_order", "")),
+            "channels": st.get("channels"),
+            "lang": str(tags.get("language", "")),
+            "title": str(tags.get("title", "")),
+            "cover": bool(disp.get("attached_pic")),
+        })
+    if not streams:
+        return None
+    fmt = data.get("format") or {}
+    try:
+        duration = float(fmt.get("duration"))
+    except (TypeError, ValueError):
+        duration = None
+    return {"streams": sorted(streams, key=lambda s: s["index"]), "duration": duration,
+            "format": str(fmt.get("format_name", ""))}
+
+
+def probe_media(path: str, timeout: float = 120.0) -> Tuple[Optional[dict], str]:
+    ffprobe = find_ffprobe()
+    if not ffprobe:
+        return None, "ffprobe が見つかりません"
+    cmd = [ffprobe, "-v", "error", "-show_entries",
+           "stream=index,codec_type,codec_name,pix_fmt,width,height,field_order,channels:"
+           "stream_tags=language,title:stream_disposition=attached_pic:format=duration,format_name",
+           "-of", "json", path]
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=timeout, creationflags=flags)
+    except Exception as e:
+        return None, f"ffprobeの実行に失敗: {e}"
+    info = parse_media_probe(done.stdout.decode("utf-8", errors="replace"))
+    if info is None:
+        return None, "動画として読めませんでした"
+    return info, ""
+
+
+def media_summary_text(info: Optional[dict]) -> str:
+    """一覧に出す、中身の短い説明(例: h264 1920x1080 / 音声2 / 字幕1)"""
+    if not info:
+        return "…"
+    videos = [s for s in info["streams"] if s["type"] == "video" and not s["cover"]]
+    audios = [s for s in info["streams"] if s["type"] == "audio"]
+    subs = [s for s in info["streams"] if s["type"] == "subtitle"]
+    parts = []
+    if videos:
+        v = videos[0]
+        size = f" {v['width']}x{v['height']}" if v.get("width") else ""
+        parts.append(f"{v['codec']}{size}")
+    else:
+        parts.append("映像なし")
+    parts.append(f"音声{len(audios)}" + (f"({audios[0]['codec']})" if len(audios) == 1 else ""))
+    if subs:
+        parts.append(f"字幕{len(subs)}")
+    return " / ".join(parts)
+
+
+def detect_interlaced(path: str, info: dict, ffmpeg: str, timeout: float = 120.0) -> bool:
+    """インターレースか。ffprobeの field_order で分からない(unknown)ときは、先頭の部分をidetで調べる"""
+    videos = [s for s in info["streams"] if s["type"] == "video" and not s["cover"]]
+    if not videos:
+        return False
+    order = videos[0]["field_order"]
+    if order in INTERLACED_ORDERS:
+        return True
+    if order == "progressive":
+        return False
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        done = subprocess.run(
+            [ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-map", f"0:{videos[0]['index']}",
+             "-frames:v", "300", "-vf", "idet", "-an", "-sn", "-f", "null", "-"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            timeout=timeout, creationflags=flags)
+    except Exception:
+        return False
+    text = done.stderr.decode("utf-8", errors="replace")
+    m = re.search(r"Multi frame detection:\s*TFF:\s*(\d+)\s*BFF:\s*(\d+)\s*Progressive:\s*(\d+)", text)
+    if not m:
+        return False
+    tff, bff, prog = (int(x) for x in m.groups())
+    return (tff + bff) > prog and (tff + bff) >= 10
+
+
+def media_output_ext(src: str, container: str) -> Tuple[str, str]:
+    """出力の拡張子と、そう決めた理由(説明が要るときだけ)"""
+    src_ext = os.path.splitext(src)[1].lower()
+    if container == "mp4":
+        return ".mp4", ""
+    if container == "mkv":
+        return ".mkv", ""
+    if src_ext in MEDIA_SAME_EXT_OK:
+        return src_ext, ""
+    return ".mkv", f"{src_ext} には書き出せないため、MKVにしました"
+
+
+def build_media_convert_args(ffmpeg: str, src: str, dst: str, info: dict, o: dict, encoder: str,
+                             interlaced: bool) -> Tuple[List[str], List[str]]:
+    """
+    変換のffmpegの引数と、画面に出す注意書きを作る。字幕・音声はコピー(指定があれば音声は変換)。
+    MP4に入らないものは、変換または除外して、注意書きに残す。
+    """
+    ext = os.path.splitext(dst)[1].lower()
+    is_mp4 = ext in MP4_FAMILY
+    is_ts = ext in (".ts", ".m2ts")
+    notes: List[str] = []
+    args: List[str] = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-nostats",
+                       "-progress", "pipe:1", "-i", src]
+    family = o["video"]  # copy / h264 / h265
+    qp = int(o.get("qp") or MEDIA_DEFAULT_QP.get(family, 30))
+    maps: List[str] = []
+    per_stream: List[str] = []
+    vo = ao = so = 0
+    any_encoded_video = False
+    cover_ordinals: List[int] = []
+    for st in info["streams"]:
+        idx, typ, codec = st["index"], st["type"], st["codec"]
+        if typ == "video":
+            maps += ["-map", f"0:{idx}"]
+            if st["cover"]:
+                cover_ordinals.append(vo)
+            elif family == "copy":
+                per_stream += [f"-c:v:{vo}", "copy"]
+                if is_mp4 and codec == "hevc":
+                    per_stream += [f"-tag:v:{vo}", "hvc1"]
+            else:
+                any_encoded_video = True
+                if interlaced:
+                    per_stream += [f"-filter:v:{vo}", "bwdif=1"]
+                if is_mp4 and family == "h265":
+                    per_stream += [f"-tag:v:{vo}", "hvc1"]
+            vo += 1
+        elif typ == "audio":
+            mode = o["audio"]
+            use = mode
+            if mode == "copy" and is_mp4 and codec not in MP4_AUDIO_COPY_OK:
+                use = "aac"
+                notes.append(f"音声({codec})はMP4に入らないため、AACに変換しました")
+            maps += ["-map", f"0:{idx}"]
+            if use == "copy":
+                per_stream += [f"-c:a:{ao}", "copy"]
+                if codec == "aac" and not is_ts and ("mpegts" in info["format"] or "aac" in info["format"]):
+                    per_stream += [f"-bsf:a:{ao}", "aac_adtstoasc"]
+            elif use == "aac":
+                per_stream += [f"-c:a:{ao}", "aac", f"-b:a:{ao}", str(o.get("aac_bitrate") or "192k")]
+            elif use == "flac":
+                per_stream += [f"-c:a:{ao}", "flac"]
+            else:
+                per_stream += [f"-c:a:{ao}", "pcm_s16le"]
+            ao += 1
+        elif typ == "subtitle":
+            if is_mp4:
+                if codec in MP4_TEXT_SUBTITLES:
+                    maps += ["-map", f"0:{idx}"]
+                    per_stream += [f"-c:s:{so}", "mov_text"]
+                    so += 1
+                else:
+                    notes.append(f"字幕({codec})はMP4に入らないため、入れませんでした(MKVなら入ります)")
+            elif is_ts:
+                if codec in TS_SUBTITLES:
+                    maps += ["-map", f"0:{idx}"]
+                    per_stream += [f"-c:s:{so}", "copy"]
+                    so += 1
+                else:
+                    notes.append(f"字幕({codec})はこの形式に入らないため、入れませんでした")
+            else:
+                maps += ["-map", f"0:{idx}"]
+                # MP4特有の字幕(mov_text)は、そのままではMKVに入らないので、srtに直す
+                per_stream += [f"-c:s:{so}", "srt" if codec == "mov_text" else "copy"]
+                so += 1
+        elif typ == "attachment" and ext == ".mkv":
+            maps += ["-map", f"0:{idx}"]
+    generic: List[str] = []
+    if any_encoded_video:
+        generic += media_video_args(encoder, family, qp) + ["-pix_fmt", "yuv420p"]
+    # 表紙画像などはそのままコピー(全体の -c:v より後ろに置いて優先させる)
+    for k in cover_ordinals:
+        per_stream += [f"-c:v:{k}", "copy"]
+    args += maps + ["-map_metadata", "0", "-map_chapters", "0", "-ignore_unknown", "-dn"]
+    if any(s["type"] == "attachment" for s in info["streams"]) and ext == ".mkv":
+        args += ["-c:t", "copy"]
+    args += generic + per_stream
+    if o["audio"] == "flac" and is_mp4:
+        args += ["-strict", "-2"]
+    if is_mp4:
+        args += ["-movflags", "+faststart"]
+    args.append(dst)
+    return args, notes
+
+
+def _audio_extract_ext(codec: str) -> Tuple[str, List[str]]:
+    """音声の中身を、そのまま単体ファイルにするときの拡張子と、追加の引数"""
+    table = {"aac": ".aac", "mp3": ".mp3", "mp2": ".mp2", "ac3": ".ac3", "eac3": ".eac3", "flac": ".flac",
+             "opus": ".opus", "vorbis": ".ogg", "dts": ".dts", "truehd": ".thd", "alac": ".m4a"}
+    if codec in table:
+        return table[codec], ["-c:a", "copy"]
+    if codec in ("pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_u8", "pcm_f32le"):
+        return ".wav", ["-c:a", "copy"]
+    if codec.startswith("pcm_"):
+        return ".wav", ["-c:a", "pcm_s24le"]   # Blu-ray等の並びが違うPCMは、劣化なしでWAVの並びに直す
+    return ".mka", ["-c:a", "copy"]
+
+
+def _subtitle_extract_ext(codec: str) -> Tuple[str, List[str]]:
+    if codec in ("subrip", "srt", "text"):
+        return ".srt", ["-c:s", "srt"]
+    if codec in ("ass", "ssa"):
+        return ".ass", ["-c:s", "copy"]
+    if codec == "webvtt":
+        return ".vtt", ["-c:s", "copy"]
+    if codec == "mov_text":
+        return ".srt", ["-c:s", "srt"]
+    return ".mks", ["-c:s", "copy"]
+
+
+def _video_extract_ext(codec: str) -> Tuple[str, List[str]]:
+    if codec == "h264":
+        return ".h264", ["-c:v", "copy", "-f", "h264"]
+    if codec == "hevc":
+        return ".h265", ["-c:v", "copy", "-f", "hevc"]
+    if codec == "mpeg2video":
+        return ".m2v", ["-c:v", "copy", "-f", "mpeg2video"]
+    return ".mkv", ["-c:v", "copy"]
+
+
+def plan_media_extract(ffmpeg: str, src: str, info: dict, kind: str, o: dict, dst_base: str) -> List[Tuple[List[str], str]]:
+    """
+    kind = "video"/"audio"/"subtitle"。ストリームごとに、(ffmpegの引数(出力ファイルは含まない), 出力ファイルの名前の候補)を返す。
+    呼び出し側が、名前の重複を避けた最終の名前を引数の末尾に付けて実行する。
+    dst_base は、出力の「フォルダー\\元の名前」(拡張子なし)。同名の回避は呼び出し側で行う。
+    """
+    wanted = [s for s in info["streams"] if s["type"] == kind and not (kind == "video" and s["cover"])]
+    label = {"video": "映像", "audio": "音声", "subtitle": "字幕"}[kind]
+    jobs: List[Tuple[List[str], str]] = []
+    for n, st in enumerate(wanted, 1):
+        codec = st["codec"]
+        extra: List[str]
+        if kind == "video":
+            ext, extra = _video_extract_ext(codec)
+        elif kind == "audio":
+            mode = o["audio"]
+            if mode == "aac":
+                ext, extra = ".aac", ["-c:a", "aac", "-b:a", str(o.get("aac_bitrate") or "192k"), "-f", "adts"]
+            elif mode == "flac":
+                ext, extra = ".flac", ["-c:a", "flac"]
+            elif mode == "wav":
+                ext, extra = ".wav", ["-c:a", "pcm_s16le"]
+            else:
+                ext, extra = _audio_extract_ext(codec)
+        else:
+            ext, extra = _subtitle_extract_ext(codec)
+        suffix = f"_{label}" + (str(n) if len(wanted) > 1 else "")
+        if st["lang"] and st["lang"] != "und" and len(wanted) > 1:
+            suffix += f"_{st['lang']}"
+        args = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
+                "-i", src, "-map", f"0:{st['index']}"] + extra
+        jobs.append((args, dst_base + suffix + ext))
+    return jobs
+
+
+def unique_media_path(path: str, reserved: Optional[set] = None) -> str:
+    """同じ名前のファイルがあれば (2)(3)… を付けて、上書きしない名前にする"""
+    reserved = reserved if reserved is not None else set()
+    base, ext = os.path.splitext(path)
+    cand, n = path, 1
+    while os.path.exists(cand) or os.path.normcase(cand) in reserved:
+        n += 1
+        cand = f"{base}({n}){ext}"
+    reserved.add(os.path.normcase(cand))
+    return cand
+
+
+def media_check_options(o: dict) -> str:
+    """組み合わせに無理があれば、その説明を返す(問題なければ空)"""
+    if o["mode"] == "convert" and o["audio"] == "wav" and o["container"] == "mp4":
+        return "MP4にはWAV(PCM)の音声を入れられません。出力形式をMKVにするか、音声をAAC/FLACにしてください。"
+    return ""
+
+
+def run_media_job(args: List[str], dst: str, duration: Optional[float], on_progress, proc_holder, stop_flag) -> Tuple[bool, str]:
+    """ffmpegを1回実行する。成功(出力ができた)か、失敗の理由を返す。失敗・中止のときは、できかけの出力を消す"""
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    tail: List[str] = []
+    try:
+        proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                creationflags=flags)
+    except OSError as e:
+        return False, f"ffmpegを起動できませんでした: {e}"
+    proc_holder(proc)
+    try:
+        for line in iter_process_lines(proc.stdout):
+            m = re.match(r"out_time_(?:us|ms)=(\d+)", line)
+            if m:
+                if duration and on_progress:
+                    # out_time_ms も実際はマイクロ秒単位(ffmpegの仕様)
+                    on_progress(min(99, int(int(m.group(1)) / 1_000_000 / duration * 100)))
+                continue
+            if "=" in line and re.match(r"[a-z_0-9]+=", line):
+                continue   # progressの他の項目
+            if line.strip():
+                tail.append(line.strip())
+                tail = tail[-6:]
+        proc.wait()
+    finally:
+        proc_holder(None)
+    ok = proc.returncode == 0 and os.path.isfile(dst) and os.path.getsize(dst) > 0
+    if stop_flag():
+        ok = False
+        tail = ["中止しました"]
+    if not ok:
+        try:
+            if os.path.exists(dst):
+                os.remove(dst)
+        except OSError:
+            pass
+        return False, (tail[-1] if tail else f"失敗(code={proc.returncode})")
+    return True, ""
+
+
+
+class MediaToolWindow(tk.Toplevel):
+    """
+    動画ファイル(mp4/mkvなど)の変換と、映像・音声・字幕だけの取り出し。
+    字幕・音声は基本すべてコピー。映像はコピー/H.264/H.265。インターレースの映像は自動で見分けて解除する。
+    """
+
+    MODES = [("convert", "変換する"), ("video", "映像だけ取り出す"), ("audio", "音声だけ取り出す"),
+             ("subtitle", "字幕だけ取り出す")]
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        s = app.settings
+        self.title("動画ファイルの変換・取り出し(mp4/mkvなど)")
+        self.geometry("980x640")
+        self.minsize(760, 520)
+        self.items: Dict[str, str] = {}       # iid -> path
+        self.infos: Dict[str, Optional[dict]] = {}
+        self._queue: "queue.Queue" = queue.Queue()
+        self._worker: Optional[threading.Thread] = None
+        self._proc = None
+        self._stop = False
+
+        self.mode_var = tk.StringVar(value=s.get("media_mode", "convert") if s.get("media_mode") in dict(self.MODES) else "convert")
+        self.container_var = tk.StringVar(value=s.get("media_container", "same"))
+        self.video_var = tk.StringVar(value=s.get("media_video", "copy"))
+        self.audio_var = tk.StringVar(value=s.get("media_audio", "copy"))
+        self.aac_var = tk.StringVar(value=s.get("media_aac", "192k") if s.get("media_aac") in MEDIA_AAC_BITRATES else "192k")
+        self.qp_var = tk.IntVar(value=self._saved_qp(self.video_var.get()))
+        self.out_mode_var = tk.StringVar(value=s.get("media_out_mode", "same"))
+        self.out_dir_var = tk.StringVar(value=s.get("media_out_dir", ""))
+        self._qp_family = self.video_var.get()
+
+        top = ttk.Frame(self, padding=8)
+        top.pack(fill=tk.X)
+        self._tips: List[Tuple[object, str]] = []
+
+        def tip_button(text, command, tip, **pack):
+            btn = ttk.Button(top, text=text, command=command)
+            btn.pack(side=tk.LEFT, **pack)
+            self._tips.append((btn, tip))
+
+        tip_button("ファイルを追加...", self._add_files, "変換・取り出しをする動画(mp4/mkv/ts/m2tsなど)を、ファイル選択画面から追加します(複数選択OK)。")
+        tip_button("フォルダーを追加...", self._add_folder, "選んだフォルダーの中の動画ファイルを、まとめて追加します(サブフォルダーの中は含みません)。", padx=(6, 0))
+        tip_button("選択を外す", self._remove_selected, "一覧で選んでいる行を、一覧から外します(ファイルは消えません)。", padx=(6, 0))
+        tip_button("全部クリア", self._clear, "一覧を空にします(ファイルは消えません)。", padx=(6, 0))
+
+        mid = ttk.Frame(self, padding=(8, 0))
+        mid.pack(fill=tk.BOTH, expand=True)
+        cols = ("file", "info", "result")
+        self.tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="extended", height=8)
+        for c, label, w in (("file", "ファイル", 380), ("info", "中身", 260), ("result", "結果", 300)):
+            self.tree.heading(c, text=label)
+            self.tree.column(c, width=w, anchor="w")
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.tag_configure("ok", background="#c6efce", foreground="#006100")
+        self.tree.tag_configure("ng", background="#ffc7ce", foreground="#9c0006")
+        self.range_select = RangeSelect(self.tree)
+
+        self.hint_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.hint_var, foreground="#555").pack(fill=tk.X, padx=10, pady=(4, 0))
+
+        mode_box = ttk.LabelFrame(self, text="やること", padding=(8, 2, 8, 4))
+        mode_box.pack(fill=tk.X, padx=8, pady=(6, 0))
+        for value, label in self.MODES:
+            ttk.Radiobutton(mode_box, text=label, variable=self.mode_var, value=value,
+                            command=self._refresh_enabled).pack(side=tk.LEFT, padx=(0, 14))
+
+        self.opt_box = ttk.LabelFrame(self, text="設定", padding=(8, 4, 8, 6))
+        self.opt_box.pack(fill=tk.X, padx=8, pady=(6, 0))
+        row1 = ttk.Frame(self.opt_box)
+        row1.pack(fill=tk.X)
+        ttk.Label(row1, text="出力形式:").pack(side=tk.LEFT)
+        self.container_combo = ttk.Combobox(row1, state="readonly", width=10,
+                                            values=[l for _k, l in MEDIA_CONTAINER_CHOICES])
+        self.container_combo.pack(side=tk.LEFT, padx=(4, 16))
+        ttk.Label(row1, text="映像:").pack(side=tk.LEFT)
+        self.video_combo = ttk.Combobox(row1, state="readonly", width=18, values=[l for _k, l in MEDIA_VIDEO_CHOICES])
+        self.video_combo.pack(side=tk.LEFT, padx=(4, 10))
+        self.qp_label = ttk.Label(row1, text="画質(QP・小さいほど高画質):")
+        self.qp_label.pack(side=tk.LEFT)
+        self.qp_spin = ttk.Spinbox(row1, from_=10, to=51, width=4, textvariable=self.qp_var)
+        self.qp_spin.pack(side=tk.LEFT, padx=(4, 0))
+        row2 = ttk.Frame(self.opt_box)
+        row2.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(row2, text="音声:").pack(side=tk.LEFT)
+        self.audio_combo = ttk.Combobox(row2, state="readonly", width=18, values=[l for _k, l in MEDIA_AUDIO_CHOICES])
+        self.audio_combo.pack(side=tk.LEFT, padx=(4, 10))
+        self.aac_label = ttk.Label(row2, text="AACのビットレート:")
+        self.aac_label.pack(side=tk.LEFT)
+        self.aac_combo = ttk.Combobox(row2, state="readonly", width=6, values=list(MEDIA_AAC_BITRATES),
+                                      textvariable=self.aac_var)
+        self.aac_combo.pack(side=tk.LEFT, padx=(4, 16))
+        self.sub_label = ttk.Label(row2, text="字幕: すべてコピー(MP4に入らない形式は除外します)", foreground="#555")
+        self.sub_label.pack(side=tk.LEFT)
+        self.enc_var = tk.StringVar()
+        ttk.Label(self.opt_box, textvariable=self.enc_var, foreground="#555").pack(fill=tk.X, pady=(6, 0))
+        self.container_combo.set(dict(MEDIA_CONTAINER_CHOICES).get(self.container_var.get(), "元のまま"))
+        self.video_combo.set(dict(MEDIA_VIDEO_CHOICES).get(self.video_var.get(), "コピー(そのまま)"))
+        self.audio_combo.set(dict(MEDIA_AUDIO_CHOICES).get(self.audio_var.get(), "コピー(そのまま)"))
+        self.video_combo.bind("<<ComboboxSelected>>", self._on_video_changed)
+        self.container_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_enabled())
+        self.audio_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_enabled())
+
+        out_box = ttk.LabelFrame(self, text="保存先(元のファイルは変更しません)", padding=(8, 2, 8, 4))
+        out_box.pack(fill=tk.X, padx=8, pady=(6, 0))
+        ttk.Radiobutton(out_box, text="元と同じフォルダー", variable=self.out_mode_var, value="same",
+                        command=self._refresh_enabled).pack(side=tk.LEFT)
+        ttk.Radiobutton(out_box, text="指定したフォルダー:", variable=self.out_mode_var, value="dir",
+                        command=self._refresh_enabled).pack(side=tk.LEFT, padx=(12, 0))
+        self.out_entry = ttk.Entry(out_box, textvariable=self.out_dir_var, width=40)
+        self.out_entry.pack(side=tk.LEFT, padx=(4, 4), fill=tk.X, expand=True)
+        self.out_button = ttk.Button(out_box, text="選ぶ...", command=self._pick_out_dir)
+        self.out_button.pack(side=tk.LEFT)
+
+        bottom = ttk.Frame(self, padding=8)
+        bottom.pack(fill=tk.X)
+        self.run_button = ttk.Button(bottom, text="実行", command=self._run)
+        self.run_button.pack(side=tk.RIGHT)
+        self.stop_button = ttk.Button(bottom, text="中止", command=self._request_stop, state=tk.DISABLED)
+        self.stop_button.pack(side=tk.RIGHT, padx=(0, 6))
+        self.status_var = tk.StringVar(value="ファイルを追加してください")
+        ttk.Label(self, textvariable=self.status_var).pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        self._tips += [(self.run_button, "一覧のファイルを、上の設定で順に処理します。元のファイルは変更せず、新しいファイルを作ります。"),
+                       (self.stop_button, "処理を止めます。途中までできたファイルは削除します。"),
+                       (self.out_button, "保存先のフォルダーを選びます。")]
+        self._setup_dnd()
+        self._refresh_enabled()
+        for widget, text in self._tips:
+            Tooltip(widget, text)
+            widget._tip_attached = True
+        attach_tooltips(self)
+        self.after(150, self._poll)
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    # ---- 設定の読み書き ----
+    def _saved_qp(self, family: str) -> int:
+        try:
+            return int(self.app.settings.get(f"media_qp_{family}", MEDIA_DEFAULT_QP.get(family, 30)))
+        except (TypeError, ValueError):
+            return MEDIA_DEFAULT_QP.get(family, 30)
+
+    @staticmethod
+    def _key_of(choices, label: str, default: str) -> str:
+        for k, l in choices:
+            if l == label:
+                return k
+        return default
+
+    def _options(self) -> dict:
+        try:
+            qp = int(self.qp_var.get())
+        except (tk.TclError, ValueError):
+            qp = MEDIA_DEFAULT_QP.get(self._key_of(MEDIA_VIDEO_CHOICES, self.video_combo.get(), "copy"), 30)
+        return {
+            "mode": self.mode_var.get(),
+            "container": self._key_of(MEDIA_CONTAINER_CHOICES, self.container_combo.get(), "same"),
+            "video": self._key_of(MEDIA_VIDEO_CHOICES, self.video_combo.get(), "copy"),
+            "audio": self._key_of(MEDIA_AUDIO_CHOICES, self.audio_combo.get(), "copy"),
+            "aac_bitrate": self.aac_var.get() or "192k",
+            "qp": max(10, min(51, qp)),
+        }
+
+    def _save_options(self, o: dict):
+        s = self.app.settings
+        s["media_mode"] = o["mode"]
+        s["media_container"] = o["container"]
+        s["media_video"] = o["video"]
+        s["media_audio"] = o["audio"]
+        s["media_aac"] = o["aac_bitrate"]
+        if o["video"] in ("h264", "h265"):
+            s[f"media_qp_{o['video']}"] = o["qp"]
+        s["media_out_mode"] = self.out_mode_var.get()
+        s["media_out_dir"] = self.out_dir_var.get()
+        save_settings(s)
+
+    def _on_video_changed(self, _e=None):
+        key = self._key_of(MEDIA_VIDEO_CHOICES, self.video_combo.get(), "copy")
+        if key in ("h264", "h265"):
+            self.qp_var.set(self._saved_qp(key))
+        self._refresh_enabled()
+
+    def _refresh_enabled(self):
+        mode = self.mode_var.get()
+        o = self._options()
+        convert = mode == "convert"
+        enc = o["video"] in ("h264", "h265")
+
+        def state(widget, on, readonly=False):
+            try:
+                widget.configure(state=("readonly" if readonly else "normal") if on else "disabled")
+            except tk.TclError:
+                pass
+        state(self.container_combo, convert, True)
+        state(self.video_combo, convert, True)
+        state(self.qp_spin, convert and enc)
+        state(self.audio_combo, convert or mode == "audio", True)
+        state(self.aac_combo, (convert or mode == "audio") and o["audio"] == "aac", True)
+        state(self.out_entry, self.out_mode_var.get() == "dir")
+        try:
+            self.out_button.configure(state="normal" if self.out_mode_var.get() == "dir" else "disabled")
+        except tk.TclError:
+            pass
+        if convert and enc:
+            label = _ENCODER_LABEL.get(self.app._current_encoder(), "")
+            self.enc_var.set(f"映像のエンコーダー: {label}(メニュー「設定」→「エンコーダー」で変更できます)。"
+                             "インターレースの映像は、自動で見分けて解除します(bwdif)。")
+        elif convert:
+            self.enc_var.set("映像はそのままコピーします(画質は変わりません)。")
+        elif mode == "video":
+            self.enc_var.set("映像だけを、再エンコードなしで取り出します(H.264→.h264、H.265→.h265、その他→.mkv)。")
+        elif mode == "audio":
+            self.enc_var.set("音声を1本ずつ単体ファイルにします(AAC→.aac、FLAC→.flac など。変換を選ぶと aac/flac/wav に変換)。")
+        else:
+            self.enc_var.set("字幕を1本ずつ単体ファイルにします(.srt / .ass。ARIB字幕などの変換できない形式は .mks)。")
+
+    def _pick_out_dir(self):
+        d = filedialog.askdirectory(parent=self, title="保存先のフォルダー", initialdir=self.out_dir_var.get() or None)
+        if d:
+            self.out_dir_var.set(d)
+
+    # ---- ファイルの追加 ----
+    def _setup_dnd(self):
+        try:
+            from tkinterdnd2 import TkinterDnD, DND_FILES  # type: ignore
+            TkinterDnD._require(self)
+            self.tree.drop_target_register(DND_FILES)
+            self.tree.dnd_bind("<<Drop>>", self._on_drop)
+            self.hint_var.set("ここに動画ファイルをドラッグ&ドロップしても追加できます")
+        except Exception:
+            self.hint_var.set("ドラッグ&ドロップを使うには、コマンドプロンプトで  pip install tkinterdnd2  を実行して再起動してください"
+                              "(使わなくても、上のボタンから追加できます)")
+
+    def _on_drop(self, event):
+        try:
+            paths = list(self.tk.splitlist(event.data))
+        except tk.TclError:
+            paths = [event.data]
+        self.add_paths(paths)
+
+    def _add_files(self):
+        exts = " ".join("*" + e for e in MEDIA_INPUT_EXTENSIONS)
+        paths = filedialog.askopenfilenames(parent=self, title="変換・取り出しをするファイル",
+                                            filetypes=[("動画ファイル", exts), ("すべて", "*.*")])
+        self.add_paths(list(paths))
+
+    def _add_folder(self):
+        d = filedialog.askdirectory(parent=self, title="フォルダーの中の動画ファイルを追加(サブフォルダーは含みません)")
+        if d:
+            self.add_paths([d])
+
+    def add_paths(self, paths: List[str]):
+        if self._worker and self._worker.is_alive():
+            return
+        existing = {os.path.normcase(os.path.abspath(p)) for p in self.items.values()}
+        expanded: List[str] = []
+        for p in paths:
+            p = os.path.abspath(p)
+            if os.path.isdir(p):
+                try:
+                    names = sorted(os.listdir(p), key=lambda x: x.lower())
+                except OSError:
+                    continue
+                expanded += [os.path.join(p, n) for n in names]
+            else:
+                expanded.append(p)
+        added = 0
+        for p in expanded:
+            if not p.lower().endswith(MEDIA_INPUT_EXTENSIONS) or not os.path.isfile(p):
+                continue
+            key = os.path.normcase(p)
+            if key in existing:
+                continue
+            existing.add(key)
+            iid = self.tree.insert("", "end", values=(os.path.basename(p), "調べています…", ""))
+            self.items[iid] = p
+            self.infos[iid] = None
+            added += 1
+        if added:
+            self.status_var.set(f"{len(self.items)}件(中身を調べています)")
+            threading.Thread(target=self._probe_all, daemon=True).start()
+
+    def _probe_all(self):
+        for iid, path in list(self.items.items()):
+            if self.infos.get(iid) is None:
+                info, err = probe_media(path)
+                self._queue.put(("probe", iid, info, err))
+
+    def _remove_selected(self):
+        if self._worker and self._worker.is_alive():
+            return
+        for iid in self.tree.selection():
+            self.items.pop(iid, None)
+            self.infos.pop(iid, None)
+            self.tree.delete(iid)
+
+    def _clear(self):
+        if self._worker and self._worker.is_alive():
+            return
+        for iid in list(self.items):
+            self.tree.delete(iid)
+        self.items.clear()
+        self.infos.clear()
+        self.status_var.set("ファイルを追加してください")
+
+    # ---- 実行 ----
+    def _run(self):
+        if self._worker and self._worker.is_alive():
+            return
+        if not self.items:
+            messagebox.showinfo("情報", "ファイルを追加してください。", parent=self)
+            return
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            messagebox.showerror("エラー", "ffmpeg が見つかりません。", parent=self)
+            return
+        o = self._options()
+        problem = media_check_options(o)
+        if problem:
+            messagebox.showwarning("設定を確認してください", problem, parent=self)
+            return
+        out_dir = ""
+        if self.out_mode_var.get() == "dir":
+            out_dir = self.out_dir_var.get().strip()
+            if not out_dir:
+                messagebox.showwarning("設定を確認してください", "保存先のフォルダーを選んでください。", parent=self)
+                return
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+            except OSError as e:
+                messagebox.showerror("エラー", f"保存先のフォルダーを作れませんでした: {e}", parent=self)
+                return
+        jobs = [(iid, path) for iid, path in self.items.items() if self.infos.get(iid)]
+        if not jobs:
+            messagebox.showinfo("情報", "中身を読めたファイルがありません。", parent=self)
+            return
+        what = dict(self.MODES)[o["mode"]]
+        if not messagebox.askokcancel(
+                "確認", f"{len(jobs)}件を「{what}」で処理します。\n元のファイルは変更せず、新しいファイルを作ります"
+                        "(同じ名前があれば、(2)などを付けます)。", parent=self):
+            return
+        self._save_options(o)
+        self._stop = False
+        self.run_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL)
+        encoder = self.app._current_encoder()
+        self._worker = threading.Thread(target=self._work, args=(ffmpeg, o, encoder, out_dir, jobs), daemon=True)
+        self._worker.start()
+
+    def _request_stop(self):
+        self._stop = True
+        kill_process_tree(self._proc)
+
+    def _set_proc(self, proc):
+        self._proc = proc
+
+    def _work(self, ffmpeg: str, o: dict, encoder: str, out_dir: str, jobs: List[Tuple[str, str]]):
+        done = failed = 0
+        reserved: set = set()
+        for n, (iid, src) in enumerate(jobs, 1):
+            if self._stop:
+                break
+            info = self.infos[iid]
+            head = f"{n}/{len(jobs)} {os.path.basename(src)}"
+            self._queue.put(("status", f"{head} を処理中…"))
+            folder = out_dir or os.path.dirname(src)
+            stem = os.path.splitext(os.path.basename(src))[0]
+            try:
+                results: List[Tuple[bool, str]] = []
+                if o["mode"] == "convert":
+                    interlaced = False
+                    if o["video"] != "copy":
+                        self._queue.put(("status", f"{head} インターレースを調べています…"))
+                        interlaced = detect_interlaced(src, info, ffmpeg)
+                    ext, why = media_output_ext(src, o["container"])
+                    dst = unique_media_path(os.path.join(folder, stem + "_変換" + ext), reserved)
+                    args, notes = build_media_convert_args(ffmpeg, src, dst, info, o, encoder, interlaced)
+                    if why:
+                        notes.insert(0, why)
+                    if interlaced and o["video"] != "copy":
+                        notes.append("インターレースを解除しました")
+                    ok, msg = run_media_job(args, dst, info.get("duration"),
+                                            lambda p, h=head: self._queue.put(("status", f"{h} {p}%")),
+                                            self._set_proc, lambda: self._stop)
+                    results.append((ok, ("→ " + os.path.basename(dst) + (" / " + " / ".join(notes) if notes else "")) if ok else msg))
+                else:
+                    jobs_x = plan_media_extract(ffmpeg, src, info, o["mode"], o, os.path.join(folder, stem))
+                    if not jobs_x:
+                        results.append((False, {"video": "映像", "audio": "音声", "subtitle": "字幕"}[o["mode"]] + "がありません"))
+                    names = []
+                    for args, want in jobs_x:
+                        dst = unique_media_path(want, reserved)
+                        ok, msg = run_media_job(args + [dst], dst, info.get("duration"),
+                                                lambda p, h=head: self._queue.put(("status", f"{h} {p}%")),
+                                                self._set_proc, lambda: self._stop)
+                        if ok:
+                            names.append(os.path.basename(dst))
+                        else:
+                            results.append((False, f"{os.path.basename(want)}: {msg}"))
+                    if names:
+                        results.insert(0, (True, "→ " + ", ".join(names)))
+                good = [m for ok, m in results if ok]
+                bad = [m for ok, m in results if not ok]
+                if bad:
+                    failed += 1
+                    self._queue.put(("result", iid, False, "; ".join(good + bad)))
+                else:
+                    done += 1
+                    self._queue.put(("result", iid, True, "; ".join(good)))
+            except Exception as e:  # noqa: BLE001
+                failed += 1
+                self._queue.put(("result", iid, False, f"失敗: {e}"))
+        text = f"完了: 成功 {done}件 / 失敗 {failed}件" + ("(中止しました)" if self._stop else "")
+        self._queue.put(("finish", text))
+
+    def _poll(self):
+        try:
+            while True:
+                kind, *rest = self._queue.get_nowait()
+                if kind == "probe":
+                    iid, info, err = rest
+                    if self.tree.exists(iid):
+                        self.infos[iid] = info
+                        self.tree.set(iid, "info", media_summary_text(info) if info else "")
+                        if not info:
+                            self.tree.set(iid, "result", err)
+                            self.tree.item(iid, tags=("ng",))
+                        n_ok = sum(1 for v in self.infos.values() if v)
+                        self.status_var.set(f"{len(self.items)}件(読めたもの {n_ok}件)")
+                elif kind == "result":
+                    iid, ok, msg = rest
+                    if self.tree.exists(iid):
+                        self.tree.set(iid, "result", msg)
+                        self.tree.item(iid, tags=("ok" if ok else "ng",))
+                elif kind == "status":
+                    self.status_var.set(rest[0])
+                elif kind == "finish":
+                    self.status_var.set(rest[0])
+                    self.run_button.config(state=tk.NORMAL)
+                    self.stop_button.config(state=tk.DISABLED)
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(150, self._poll)
+
+    def _close(self):
+        if self._worker and self._worker.is_alive():
+            if not messagebox.askyesno("確認", "処理中です。中止して閉じますか?", parent=self):
+                return
+            self._request_stop()
+        self.destroy()
 
 
 class AspectFixWindow(tk.Toplevel):
@@ -6064,13 +6894,14 @@ class App(tk.Tk):
         tool_menu.add_separator()
         tool_menu.add_command(label="ファイル名の記号を全角に修正", command=self._fix_semicolon_filenames)
         tool_menu.add_command(label="縦横比を直す...", command=self._open_aspect_fix)
+        tool_menu.add_command(label="動画ファイルの変換・取り出し...", command=self._open_media_tool)
         tool_menu.add_separator()
         tool_menu.add_command(label="二重にエンコードしたファイルを探して削除...", command=self._open_duplicates)
         tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
         menubar.add_cascade(label="ツール", menu=tool_menu)
         self.sort_button = MenuEntryProxy(tool_menu, 0)
         self.fix_names_item = MenuEntryProxy(tool_menu, 2)
-        self.delete_converted_button = MenuEntryProxy(tool_menu, 6)
+        self.delete_converted_button = MenuEntryProxy(tool_menu, 7)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="エンコード設定...", command=lambda: self.open_settings_editor("preset"))
@@ -6433,6 +7264,18 @@ class App(tk.Tk):
         except tk.TclError:
             pass
         self._dup_win = DuplicateEncodeWindow(self)
+
+    def _open_media_tool(self):
+        """動画ファイルの変換・取り出しウインドウ(開いていれば前面に出す)"""
+        win = getattr(self, "_media_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        self._media_win = MediaToolWindow(self)
 
     def _open_aspect_fix(self):
         """縦横比を直すウインドウ(開いていれば前面に出す)"""

@@ -248,7 +248,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td>rplsinfo.exe</td><td>番組名・チャンネル・放送日の取得</td><td><a href="https://github.com/tsukumijima/rplsinfo/releases/download/v1.5.2/rplsinfo152.zip" target="_blank" rel="noopener">rplsinfo152.zip(v1.5.2)</a> をダウンロードして解凍し、中の <code>rplsinfo.exe</code> を取り出します(配布元: <a href="https://github.com/tsukumijima/rplsinfo/releases" target="_blank" rel="noopener">tsukumijima/rplsinfo の Releases</a>)。同じフォルダに置くか、PATHを通します。</td></tr>
     <tr><td>NVIDIAのGPU <small>(推奨)</small></td><td>高速なエンコード(<code>hevc_nvenc</code>)、CUDAデコード、ノイズ検査</td><td><b>無くても使えます。</b>メニュー「設定」→「エンコーダー」で、Intel(QSV)・AMD(AMF)・CPU(libx265)に切り替えられます。「自動」なら、使えるものを自動で選びます(CPUは遅いです)。</td></tr>
     <tr><td>TsSplitter.exe <small>(用意不要)</small></td><td>録画の途中で、本チャンネル⇔サブチャンネルが切り替わるファイルの分割</td><td>アプリに埋め込んであり、必要になったときに同じフォルダへ自動で取り出します。自分で置いたものがあれば、そちらを使います。</td></tr>
-    <tr><td>tkinterdnd2 <small>(任意)</small></td><td>「縦横比を直す」へのドラッグ&amp;ドロップ</td><td>使いたい場合だけ、コマンドプロンプトで <code>pip install tkinterdnd2</code> を実行します。入れなくても、ほかの機能はすべて使えます。</td></tr>
+    <tr><td>tkinterdnd2 <small>(任意)</small></td><td>「縦横比を直す」「動画ファイルの変換・取り出し」へのドラッグ&amp;ドロップ</td><td>使いたい場合だけ、コマンドプロンプトで <code>pip install tkinterdnd2</code> を実行します。入れなくても、ほかの機能はすべて使えます。</td></tr>
   </table></div>
   <p class="note"><b class="lb">入れるもの・入れないもの</b>上の表のほかに、Pythonの追加ライブラリ(<code>pip install</code>)は必要ありません(<code>tkinterdnd2</code> は任意)。Pythonのインストーラーでは「tcl/tk」のチェックを外さないでください(画面の表示に使います)。</p>
   <p class="note">rplsinfo.exe も、<code>m2ts_encoder.pyw</code> と同じフォルダに置くのがいちばん簡単です。</p>
@@ -388,6 +388,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <div class="card"><h4>変換済みm2tsを削除</h4><p>メニュー「ツール」。変換済み(mkv/mp4がある)の元m2tsをまとめて削除します。mkv/mp4は削除しません。ノイズ検査が未完了・中断のものは対象になりません。</p></div>
     <div class="card"><h4>作品ごとに仕分け</h4><p>メニュー「ツール」→「仕分け」。「まとめて仕分け(チャンネル別→作品ごと)」なら、チャンネル別の仕分けのあと、続けてこの画面が開きます。仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。ファイルごとに移動先を選べ、直前の1回は元に戻せます。作品名は、同じ放送局の他の番組名と見比べて、複数の回に共通する名前(空白を含めて)を自動で提案します(1本だけの番組は動かしません)。</p></div>
     <div class="card"><h4>二重にエンコードしたファイルを探して削除</h4><p>番組名・放送日・開始時刻が同じ変換済みmkv/mp4を組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。対のcsvも一緒に削除します(ごみ箱には入りません)。</p></div>
+    <div class="card"><h4>動画ファイルの変換・取り出し</h4><p>メニュー「ツール」。mp4/mkv/ts/m2tsなどを、MP4・MKV・元の形式に作り直します。字幕・音声は基本コピー、映像はコピー/H.264/H.265(インターレースは自動で解除)。音声はAAC/FLAC/WAVへの変換も可能です。映像だけ・音声だけ・字幕だけを、中身そのままの単体ファイルに取り出すこともできます。元のファイルは変更せず、新しいファイルを作ります。</p></div>
     <div class="card"><h4>縦横比を直す</h4><p>変換済みmkv/mp4の4:3 / 16:9表示を、再エンコードなしで書き換えます。一覧から選ぶか、ドラッグ&amp;ドロップ(要 <code>pip install tkinterdnd2</code>)で追加します。</p></div>
     <div class="card"><h4>ファイル名の記号を全角に修正</h4><p>過去の版で半角記号(<code>;</code> <code>@</code> <code>$</code> など)になったファイル名を、本来の全角へ戻します。</p></div>
     <div class="card"><h4>一覧をCSVに保存</h4><p>メニュー「ファイル」から。</p></div>
@@ -467,7 +468,12 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <div class="day"><span class="d">2026-11-07</span><span class="vr">v2026.11.07.1〜v2026.11.07.10</span><span class="new">最新</span>
+  <div class="day"><span class="d">2026-11-08</span><span class="vr">v2026.11.08.1</span><span class="new">最新</span>
+  <ul>
+    <li>ツール →「動画ファイルの変換・取り出し」を追加。mp4/mkv/ts/m2tsなどを、MP4・MKV・元の形式に作り直せます(字幕・音声は基本コピー。映像はコピー/H.264/H.265で、インターレースは自動で見分けて解除。音声はAAC/FLAC/WAVにも変換可)。映像だけ・音声だけ・字幕だけを、中身そのままの単体ファイルに取り出す機能もあります。元のファイルは変更しません</li>
+  </ul>
+  </div>
+  <details class="day"><summary><span class="d">2026-11-07</span><span class="vr">v2026.11.07.1〜v2026.11.07.10</span></summary>
   <ul>
     <li>TsSplitterでの分割が、出力ファイルを作れずに失敗することがあったのを修正(TsSplitterGUIで分割できる設定と同じ呼び方にしました)</li>
     <li>TsSplitterで分けたファイル(「_HD」「_HD-1」「_HD-2」…)を、番号の順にエンコードするようにしました</li>
@@ -480,7 +486,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>CPUデコードでやりなおして成功したファイルに、最初のCUDA失敗の診断結果(失敗)が残って表示されていたのを修正しました</li>
     <li>番組名が「(吹)」など「(」で始まる録画が、変換済みでも「未変換」と表示されていたのを修正しました</li>
   </ul>
-  </div>
+  </details>
   <details class="day"><summary><span class="d">2026-11-06</span><span class="vr">v2026.11.06.1〜v2026.11.06.8・ドキュメント</span></summary>
   <ul>
     <li>録画の途中で本チャンネル⇔サブチャンネルが切り替わるファイルを、TsSplitterで分割してからエンコードできるようにしました。エンコード前にファイルの数か所を調べて切替を見つけ、番組情報とPMTの切替ごとに分けて、分けたファイルを一覧の元の行の下に追加してエンコードします(元のファイルは残ります)。エンコードに失敗したときも、分割して試しなおします。TsSplitter.exe はアプリに埋め込んであり(作者の説明書で再配布が許されています)、必要になったときに同じフォルダへ取り出します。分けたファイルのうち5秒以下の短いものは、ゴミとして自動で削除します。番組名・放送日は元のファイルのものを使い、同名になる出力には「(2)」「(3)」の連番が付きます。メニュー「設定」でON/OFFできます。(実際の録画での確認は、これからです)</li>
