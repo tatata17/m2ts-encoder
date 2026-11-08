@@ -3206,7 +3206,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.08.1"
+APP_VERSION = "2026.11.08.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -4904,7 +4904,7 @@ class MediaToolWindow(tk.Toplevel):
                 return k
         return default
 
-    def _options(self) -> dict:
+    def _collect_options(self) -> dict:
         try:
             qp = int(self.qp_var.get())
         except (tk.TclError, ValueError):
@@ -4939,7 +4939,7 @@ class MediaToolWindow(tk.Toplevel):
 
     def _refresh_enabled(self):
         mode = self.mode_var.get()
-        o = self._options()
+        o = self._collect_options()
         convert = mode == "convert"
         enc = o["video"] in ("h264", "h265")
 
@@ -5071,7 +5071,7 @@ class MediaToolWindow(tk.Toplevel):
         if not ffmpeg:
             messagebox.showerror("エラー", "ffmpeg が見つかりません。", parent=self)
             return
-        o = self._options()
+        o = self._collect_options()
         problem = media_check_options(o)
         if problem:
             messagebox.showwarning("設定を確認してください", problem, parent=self)
