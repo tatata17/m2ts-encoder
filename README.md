@@ -22,7 +22,7 @@ Python(tkinter)で動く **`m2ts_encoder.pyw` 1つだけ** で動作します(�
 | Python 3 | 3.9以上を推奨。公式サイトからインストール。インストーラーで **「Add python.exe to PATH」** と、`.pyw` を関連付ける **「py launcher」** にチェックを入れてください |
 | ffmpeg / ffprobe | 同じフォルダに置くか、PATHを通す(`ffprobe` は「おまかせ」の自動判定に使います)。入手先: [gyan.dev の Windows 用ビルド](https://www.gyan.dev/ffmpeg/builds/)。**「full」版**を選んでください(ARIB字幕を入れるのに必要な部品は、full版にだけ入っています)。zipの中の `bin` フォルダにある `ffmpeg.exe` と `ffprobe.exe` を使います |
 | rplsinfo.exe | 同じフォルダに置くか、PATHを通す(番組名・チャンネル・放送日の取得に使います)。入手先: [rplsinfo152.zip(v1.5.2)](https://github.com/tsukumijima/rplsinfo/releases/download/v1.5.2/rplsinfo152.zip) をダウンロードして解凍し、中の `rplsinfo.exe` を取り出す(配布元: [tsukumijima/rplsinfo](https://github.com/tsukumijima/rplsinfo/releases))。|
-| TsSplitter.exe(用意不要) | 録画の途中で本チャンネル⇔サブチャンネルが切り替わるファイルの分割に使います。アプリに埋め込んであり、必要になったときに同じフォルダへ取り出します(自分で置いたものがあれば、そちらを使います)。作者の説明書で再配布が許されています |
+| TsSplitter.exe(用意不要) | 録画の途中で本チャンネル⇔サブチャンネルが切り替わるファイルの分割に使います。アプリに埋め込んであり、必要になったときに同じフォルダへ取り出します(自分で置いたものがあれば、そちらを使います)。 |
 | NVIDIAのGPU(推奨) | 既定のエンコード設定は `hevc_nvenc`(NVIDIAのハードウェアエンコード)を使います。無くても、Intel(QSV)・AMD(AMF)・CPU(libx265)でエンコードできます(メニュー「設定」→「エンコーダー」。「自動」なら、使えるものを自動で選びます) |
 
 「PATHを通す」が分からない場合は、ffmpeg と rplsinfo を `m2ts_encoder.pyw` と**同じフォルダに置く**だけで動きます。PATHの設定のしかたは、[こちらの解説(Qiita)](https://qiita.com/shuhey/items/7ee0d25f14a997c9e285)が参考になります。
