@@ -263,6 +263,14 @@ def list_channel_dirs() -> List[str]:
     return result
 
 
+def is_nonempty_file(path: str) -> bool:
+    """ファイルがあって、中身が空でない(0バイトでない)か"""
+    try:
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
 def list_converted_names(folder: str, include_sorted: bool = True) -> List[str]:
     """
     フォルダ直下の .mkv / .mp4 ファイル名(拡張子付き)の一覧を返す。
@@ -277,7 +285,7 @@ def list_converted_names(folder: str, include_sorted: bool = True) -> List[str]:
         except Exception:
             continue
         for name in entries:
-            if name.lower().endswith(CONVERTED_EXTENSIONS) and os.path.isfile(os.path.join(current, name)):
+            if name.lower().endswith(CONVERTED_EXTENSIONS) and is_nonempty_file(os.path.join(current, name)):
                 names.append(name)
     return names
 
@@ -494,7 +502,7 @@ def find_converted_file(
         return None
     for name in entries:
         path = os.path.join(folder, name)
-        if not os.path.isfile(path) or not name.lower().endswith(CONVERTED_EXTENSIONS):
+        if not name.lower().endswith(CONVERTED_EXTENSIONS) or not is_nonempty_file(path):
             continue
         base, _ext = os.path.splitext(name)
         if is_other_date_file(base, date_digits, source_base_name):
@@ -525,7 +533,7 @@ def find_converted_path(
             continue
         for name in entries:
             path = os.path.join(current, name)
-            if not name.lower().endswith(CONVERTED_EXTENSIONS) or not os.path.isfile(path):
+            if not name.lower().endswith(CONVERTED_EXTENSIONS) or not is_nonempty_file(path):
                 continue
             base, _ext = os.path.splitext(name)
             if is_other_date_file(base, date_digits, source_base_name):
@@ -2010,27 +2018,62 @@ def get_settings_path() -> str:
     return os.path.join(get_app_data_dir(), SETTINGS_FILENAME)
 
 
-def load_settings() -> Dict[str, str]:
-    path = get_settings_path()
-    if not os.path.isfile(path):
-        return {}
+def write_json_safely(path: str, data) -> bool:
+    """
+    JSONを、書いている途中で落ちても壊れないように保存する。
+    いったん別名(.tmp)に書ききってから入れ替える。入れ替える前の内容は .bak に残す
+    (本体が読めなくなったときに、read_json_with_backup が .bak から読みなおす)。
+    """
+    tmp = path + ".tmp"
     try:
-        with io.open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+        with io.open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        if os.path.isfile(path):
+            try:
+                with io.open(path, "r", encoding="utf-8") as f:
+                    json.load(f)            # 今の内容が正しく読めるときだけ、バックアップにする
+                shutil.copy2(path, path + ".bak")
+            except Exception:
+                pass
+        os.replace(tmp, path)
+        return True
     except Exception:
-        pass
-    return {}
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def read_json_with_backup(path: str, expected_type):
+    """JSONを読む。本体が無い・壊れているときは .bak を読む。どちらも読めなければ None"""
+    for candidate in (path, path + ".bak"):
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            with io.open(candidate, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, expected_type):
+                return data
+        except Exception:
+            continue
+    return None
+
+
+def load_settings() -> Dict[str, str]:
+    data = read_json_with_backup(get_settings_path(), dict)
+    return data if data is not None else {}
 
 
 def save_settings(settings: Dict[str, str]) -> None:
-    path = get_settings_path()
-    try:
-        with io.open(path, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    write_json_safely(get_settings_path(), settings)
 
 
 def find_vlc(explicit_path: Optional[str] = None) -> Optional[str]:
@@ -2068,26 +2111,14 @@ def player_seek_args(player_path: str, seconds: float) -> Optional[List[str]]:
 
 
 def load_bat_scripts() -> List[Dict[str, str]]:
-    path = get_config_path()
-    if not os.path.isfile(path):
+    data = read_json_with_backup(get_config_path(), list)
+    if data is None:
         return []
-    try:
-        with io.open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return [item for item in data if "name" in item and "path" in item]
-    except Exception:
-        pass
-    return []
+    return [item for item in data if isinstance(item, dict) and "name" in item and "path" in item]
 
 
 def save_bat_scripts(scripts: List[Dict[str, str]]) -> None:
-    path = get_config_path()
-    try:
-        with io.open(path, "w", encoding="utf-8") as f:
-            json.dump(scripts, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    write_json_safely(get_config_path(), scripts)
 
 
 # ---------------------------------------------------------------------------
@@ -3206,7 +3237,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.08.2"
+APP_VERSION = "2026.11.12.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5693,7 +5724,6 @@ class DuplicateEncodeWindow(tk.Toplevel):
 
     def _apply_lengths(self):
         """長さが読めたグループで、長さが違うもの(別の放送かもしれない)は、全部「残す」にして黄色で示す"""
-        changed = False
         by_group: Dict[int, List[dict]] = {}
         for e in self.entries:
             by_group.setdefault(self.group_of[e["path"]], []).append(e)
@@ -5710,7 +5740,6 @@ class DuplicateEncodeWindow(tk.Toplevel):
                 for e in members:
                     if e["path"] not in self.manual:
                         self.action[e["path"]] = "keep"
-                changed = True
         self._render()
 
     # ---- 表示 ----
@@ -6297,7 +6326,7 @@ class SeriesSortWindow(tk.Toplevel):
         self.filter_var = tk.StringVar()
         self.remember_var = tk.BooleanVar(value=True)
         self.info_var = tk.StringVar()
-        self.rules: Dict[str, str] = dict(load_settings().get("series_rules", {}) or {})
+        self.rules: Dict[str, str] = dict(self.app.settings.get("series_rules", {}) or {})
         self._busy = False
 
         top = ttk.Frame(self, padding=(8, 6))
@@ -6352,7 +6381,7 @@ class SeriesSortWindow(tk.Toplevel):
     # ---- 読み込み・表示 ----
     def reload(self):
         self.items = scan_series_items(self.root_dir)
-        self.rules = dict(load_settings().get("series_rules", {}) or {})
+        self.rules = dict(self.app.settings.get("series_rules", {}) or {})
         self.dest = dict(suggest_series_destinations(self.items, self.rules))
         self.manual = set()
         self._render()
@@ -6536,7 +6565,9 @@ class SeriesSortWindow(tk.Toplevel):
             messagebox.showinfo("仕分け", msg, parent=self)
 
     def _remember_rules(self, moved_items: List[dict]):
-        settings = load_settings()
+        # メイン画面が持っている設定に書く(別に読みなおして保存すると、あとでメイン画面が
+        # 設定を保存したときに、古い内容で上書きされて、覚えたルールが消えてしまう)
+        settings = self.app.settings
         rules = dict(settings.get("series_rules", {}) or {})
         for it in moved_items:
             name = self.dest.get(it["path"])
@@ -6635,6 +6666,8 @@ class App(tk.Tk):
 
         self._build_ui()
         self._setup_tooltips()
+        self._closing = False
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         # 前回、途中で終わったログを、まとめに追記する。保存期間を過ぎた分の整理も(裏で)する
         threading.Thread(target=lambda: (fold_leftover_run_logs(), prune_log_store()), daemon=True).start()
         threading.Thread(target=self._detect_encoders_bg, daemon=True).start()  # 使えるエンコーダーを裏で調べる
@@ -6879,10 +6912,11 @@ class App(tk.Tk):
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="再スキャン", command=self.start_scan)
         file_menu.add_command(label="一覧をCSVに保存...", command=self.save_csv)
+        csv_index = file_menu.index("end")
         file_menu.add_separator()
-        file_menu.add_command(label="終了", command=self.destroy)
+        file_menu.add_command(label="終了", command=self._on_close)
         menubar.add_cascade(label="ファイル", menu=file_menu)
-        self.csv_button = MenuEntryProxy(file_menu, 1)
+        self.csv_button = MenuEntryProxy(file_menu, csv_index)
 
         tool_menu = tk.Menu(menubar, tearoff=0)
         sort_menu = tk.Menu(tool_menu, tearoff=0)
@@ -6891,17 +6925,21 @@ class App(tk.Tk):
         sort_menu.add_command(label="チャンネル別に仕分け", command=self.sort_into_channel_folders)
         sort_menu.add_command(label="作品ごとに仕分け...", command=self._open_series_sort)
         tool_menu.add_cascade(label="仕分け", menu=sort_menu)
+        sort_index = tool_menu.index("end")
         tool_menu.add_separator()
         tool_menu.add_command(label="ファイル名の記号を全角に修正", command=self._fix_semicolon_filenames)
+        fix_names_index = tool_menu.index("end")
         tool_menu.add_command(label="縦横比を直す...", command=self._open_aspect_fix)
         tool_menu.add_command(label="動画ファイルの変換・取り出し...", command=self._open_media_tool)
         tool_menu.add_separator()
         tool_menu.add_command(label="二重にエンコードしたファイルを探して削除...", command=self._open_duplicates)
         tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
+        delete_converted_index = tool_menu.index("end")
         menubar.add_cascade(label="ツール", menu=tool_menu)
-        self.sort_button = MenuEntryProxy(tool_menu, 0)
-        self.fix_names_item = MenuEntryProxy(tool_menu, 2)
-        self.delete_converted_button = MenuEntryProxy(tool_menu, 7)
+        # 項目の番号は、足した直後に取る(項目を増やしても、ずれないように)
+        self.sort_button = MenuEntryProxy(tool_menu, sort_index)
+        self.fix_names_item = MenuEntryProxy(tool_menu, fix_names_index)
+        self.delete_converted_button = MenuEntryProxy(tool_menu, delete_converted_index)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="エンコード設定...", command=lambda: self.open_settings_editor("preset"))
@@ -7364,6 +7402,21 @@ class App(tk.Tk):
 
         self.status_var.set(f"ファイル名修正: {fixed}/{len(targets)}件")
 
+    def _converted_file_exists_now(self, data: dict) -> bool:
+        """この行の変換後のファイル(mkv/mp4)が、いま実際にあって空でないか"""
+        out = data.get("output_path")
+        if out and is_nonempty_file(out):
+            return True
+        path = data["path"]
+        base_name = os.path.splitext(os.path.basename(path))[0]
+        try:
+            return find_converted_path(
+                os.path.dirname(path), base_name, data.get("program_name"),
+                date_digits=normalize_date_digits(data.get("broadcast_date") or ""),
+            ) is not None
+        except Exception:
+            return False  # 確かめられないときは、削除しない側に倒す
+
     def _delete_converted_m2ts(self):
         """
         変換済み(mkv/mp4が存在する)m2tsファイルを削除する。
@@ -7392,6 +7445,25 @@ class App(tk.Tk):
         else:
             target_iids = [iid for iid in self._visible_iids() if is_target(iid)]
             scope_label = "表示中の" if self.filter_var.get().strip() else "一覧内すべての"
+
+        # 「変換済み」の印はスキャンしたときのもの。そのあとで変換後のファイルを消したり移したりして
+        # いるかもしれないので、いま実際にあるか(空でないか)を確かめてから対象にする
+        missing_iids = [iid for iid in target_iids if not self._converted_file_exists_now(self.row_data[iid])]
+        if missing_iids:
+            missing = set(missing_iids)
+            target_iids = [iid for iid in target_iids if iid not in missing]
+            for iid in missing_iids:
+                self.row_data[iid]["converted"] = False
+                self.tree.set(iid, "converted", "✕")
+                self.tree.item(iid, tags=("converted_no",))
+            names = "\n".join(os.path.basename(self.row_data[iid]["path"]) for iid in missing_iids[:10])
+            if len(missing_iids) > 10:
+                names += f"\n...ほか{len(missing_iids) - 10}件"
+            messagebox.showwarning(
+                "変換後のファイルが見つかりません",
+                f"次の {len(missing_iids)}件は、変換後のファイル(mkv/mp4)が見つからないか、空のため、削除の対象から外しました。\n"
+                "(スキャンのあとで消した・移した可能性があります。一覧の印も ✕ に直しました)\n\n" + names,
+            )
 
         if not target_iids:
             messagebox.showinfo("情報", f"{scope_label}変換済みm2tsファイルが見つかりませんでした。")
@@ -8231,7 +8303,6 @@ class App(tk.Tk):
         self.after(100, self._poll_encode_queue)
 
     def _noise_check_worker(self, iids: List[str]):
-        total = len(iids)
         for index, iid in enumerate(iids, start=1):
             if self.stop_requested:
                 self.encode_queue.put(("stopped",))
@@ -9551,6 +9622,49 @@ class App(tk.Tk):
         self.encode_queue.put(("log", "[再エンコード] 失敗したため、元のファイルを元に戻しました。"))
         return original_path
 
+    def _busy_tool_windows(self) -> list:
+        """処理中のツールのウインドウ(動画ファイルの変換・縦横比を直す)"""
+        busy = []
+        for w in self.winfo_children():
+            worker = getattr(w, "_worker", None)
+            if worker is not None and hasattr(w, "_request_stop") and worker.is_alive():
+                busy.append(w)
+        return busy
+
+    def _on_close(self):
+        """メイン画面を閉じる。エンコード・ノイズ検査・ツールの処理の途中なら、確認してから止めて閉じる
+        (止めずに閉じると、ffmpegだけが裏で動き続け、未完成の出力が残ってしまう)。"""
+        if self._closing:
+            return
+        tools = self._busy_tool_windows()
+        if not self.encoding_running and not tools:
+            self.destroy()
+            return
+        if not messagebox.askyesno(
+                "確認",
+                "エンコードなどの処理の途中です。\n中止して終了しますか?\n\n"
+                "いま処理中のファイルは未完成になるので、出力を消してから終了します。",
+                icon="warning", parent=self):
+            return
+        self._closing = True
+        self.status_var.set("中止して終了しています...")
+        if self.encoding_running:
+            self.request_stop()
+        for w in tools:
+            try:
+                w._request_stop()
+            except Exception:
+                pass
+        started = time.time()
+
+        def wait():
+            # 止めたあとの後始末(未完成の出力の削除)が済むのを待つ。長引くときは15秒であきらめて閉じる
+            if (self.encoding_running or self._busy_tool_windows()) and time.time() - started < 15:
+                self.after(200, wait)
+                return
+            self.destroy()
+        self.after(200, wait)
+
     def request_stop(self):
         if not self.encoding_running:
             return
@@ -10316,11 +10430,13 @@ class App(tk.Tk):
                         else:
                             self.status_var.set("エンコードキューが完了しました。")
                             self._append_log("=== 全ファイルのエンコードが完了しました ===")
-                        self._show_diagnostic_summary()
+                        if not self._closing:
+                            self._show_diagnostic_summary()
                     else:
                         self.status_var.set("エンコードキューを中断しました。")
                         self._append_log("=== 中断されました ===")
-                        messagebox.showinfo("中断", "エンコードキューを中断しました。")
+                        if not self._closing:  # 終了の途中なら、案内は出さずに閉じる
+                            messagebox.showinfo("中断", "エンコードキューを中断しました。")
         except queue.Empty:
             pass
 
