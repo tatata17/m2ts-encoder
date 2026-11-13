@@ -468,7 +468,12 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <div class="day"><span class="d">2026-11-12</span><span class="vr">v2026.11.12.1</span><span class="new">最新</span>
+  <div class="day"><span class="d">2026-11-13</span><span class="vr">v2026.11.13.1</span><span class="new">最新</span>
+  <ul>
+    <li>アップデートのときに、ダウンロードしたファイルが配布元の記録(SHA-256)と一致するかを確かめるようにしました。途中で壊れたファイルや、別の版と入れ違ったファイルで上書きされるのを防ぎます(改行コードの違いでは止まりません)</li>
+  </ul>
+  </div>
+  <details class="day"><summary><span class="d">2026-11-12</span><span class="vr">v2026.11.12.1</span></summary>
   <ul>
     <li>「変換済みm2tsを削除」で、削除の直前に、変換後のファイル(mkv/mp4)がいまも残っているかを確かめるようにしました。スキャンのあとで変換後のファイルを消した・移した場合は、元のm2tsを削除の対象から外して知らせます</li>
     <li>中身が空(0バイト)のmkv/mp4を、「変換済み」と数えないようにしました</li>
@@ -476,7 +481,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>「作品ごとに仕分け」で覚えたフォルダ名が、そのあと別の設定を変えると消えてしまうことがあったのを修正</li>
     <li>設定の保存を、書いている途中でパソコンが落ちても壊れない方法に変えました。ひとつ前の内容を控えとして残し、設定ファイルが読めなくなったときは控えから読みなおします</li>
   </ul>
-  </div>
+  </details>
   <details class="day"><summary><span class="d">2026-11-08</span><span class="vr">v2026.11.08.1〜v2026.11.08.2</span></summary>
   <ul>
     <li>ツール →「動画ファイルの変換・取り出し」を追加。mp4/mkv/ts/m2tsなどを、MP4・MKV・元の形式に作り直せます(字幕・音声は基本コピー。映像はコピー/H.264/H.265で、インターレースは自動で見分けて解除。音声はAAC/FLAC/WAVにも変換可)。映像だけ・音声だけ・字幕だけを、中身そのままの単体ファイルに取り出す機能もあります。元のファイルは変更しません</li>

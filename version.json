@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.12.1",
+  "version": "2026.11.13.1",
   "file": "m2ts_encoder.pyw",
-  "sha256": "47db664f161b091a576242e4d3abd95f558b9b975c4cebdd3d7ed84bb2e9a8c7",
-  "notes": ""
+  "sha256": "436e047c61653a0e1cfaa2e92226f7d04e85f5f1d6e9916c806b9bc81e1a70fc",
+  "notes": "アップデートのときに、ダウンロードしたファイルが壊れていないかを SHA-256 で確かめるようにしました"
 }
