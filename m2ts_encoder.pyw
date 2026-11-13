@@ -3292,9 +3292,21 @@ def is_newer_version(remote: str, local: Optional[str] = None) -> bool:
 
 
 def download_update_source(info: Dict[str, object]) -> bytes:
-    """新しい版のファイルを取得し、壊れていないか確認してから返す(確認に通らなければ例外)"""
+    """新しい版のファイルを取得し、壊れていないか確認してから返す(確認に通らなければ例外)。返すのは改行をLFにそろえた中身"""
     base = str(info.get("_base") or UPDATE_BASE_URL)
     raw = _http_get(base + str(info["file"]) + f"?t={int(datetime.datetime.now().timestamp())}", timeout=60.0)
+    # 改行を LF にそろえる。SHA-256 はこの形で計算し(tools/release.py と同じ計算。改行コードの違いだけで
+    # 更新が止まらないように)、保存もこの形でする(改行が二重にならないように)
+    raw = raw.replace(b"\r\n", b"\n")
+    expected = str(info.get("sha256") or "").strip().lower()
+    if expected:  # version.json に sha256 が無い版(古い公開のしかた)は、照合せずに通す
+        # 配布ファイルが途中で壊れたり、別の版と入れ違ったりしていないかを確かめる
+        if hashlib.sha256(raw).hexdigest() != expected:
+            raise ValueError(
+                "ダウンロードしたファイルが、配布元の記録(SHA-256)と一致しません。\n"
+                "公開直後なら、数分待つと直ります。しばらく待っても同じときは、待っても直りません。"
+                "配布ページから新しいファイルを入れ直してください"
+            )
     text = raw.decode("utf-8")
     if len(raw) < 100_000:
         raise ValueError("ダウンロードしたファイルが小さすぎます(壊れている可能性があります)")
