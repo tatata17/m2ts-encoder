@@ -43,7 +43,8 @@ def register(host):           # 起動時に1回呼ばれます
 
 ### `register_scan_extension(ext, default=True)`
 
-- この拡張子のファイルには、rplsinfo と、対になる rpls を使いません。番組情報は `register_program_info_provider` に任せます
+- この拡張子のファイルは、番組情報をまず `register_program_info_provider` に聞きます。そこで取れなかったときだけ、ファイルそのものを rplsinfo で読んでみます(中身が放送の TS なら、拡張子が `.m2ts` でなくても読めます)
+- 対になる rpls は探しません
 - チェックの状態は設定に覚えます(`default` は、まだ覚えていないときの初期値)
 - `.m2ts` と `.rpls` は本体のものなので、登録できません
 

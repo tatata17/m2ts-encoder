@@ -3239,7 +3239,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.19.2"
+APP_VERSION = "2026.11.19.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6691,7 +6691,8 @@ class PluginHost:
     # ---- スキャン
     def register_scan_extension(self, ext: str, default: bool = True) -> None:
         """スキャンの対象にする拡張子を足し、検索対象の並びにチェックボックスを出す。
-        この拡張子のファイルは rplsinfo・対になるrpls を使わず、番組情報は register_program_info_provider に任せる"""
+        この拡張子のファイルは、番組情報をまず register_program_info_provider に聞く。そこで取れなかったときだけ、
+        ファイルそのものを rplsinfo で読んでみる(中身が放送のTSなら読める)。対になるrpls は探さない"""
         ext = str(ext).strip().lower()
         if not ext.startswith("."):
             ext = "." + ext
@@ -7393,7 +7394,9 @@ class App(tk.Tk):
 
         for index, path in enumerate(files, start=1):
             base_name = os.path.basename(path)
-            # プラグインが足した拡張子のファイルは、rplsinfo・対になるrpls を使わない(番組情報はプラグインに聞く)
+            # プラグインが足した拡張子のファイルは、まずプラグインに番組情報を聞く(下)。対になるrplsは探さない。
+            # プラグインから取れなかったときだけ、ファイルそのものを rplsinfo で読んでみる
+            # (中身が放送のTSなら、拡張子が .m2ts でなくても番組情報が入っている)
             plugin_managed = bool(plugin_extensions) and path.lower().endswith(plugin_extensions)
             info = None if plugin_managed else get_program_info(self.rplsinfo_path, path)
             info_source_path = None
@@ -7428,6 +7431,13 @@ class App(tk.Tk):
                         channel_name = plugin_info["channel"].strip()
                     if plugin_info["broadcast_date"].strip():
                         broadcast_date = plugin_info["broadcast_date"].strip()
+
+            if plugin_managed and program_name == NO_PROGRAM_INFO:
+                info = get_program_info(self.rplsinfo_path, path)
+                if info is not None and info[1].strip():
+                    _, program_name, channel_name, broadcast_date = info
+                    if not channel_name:
+                        channel_name = "(不明)"
 
             file_dir = os.path.dirname(path)
             # 同名番組(別日放送)を取り違えないよう、録画日付が異なる変換済みは除外して照合する
