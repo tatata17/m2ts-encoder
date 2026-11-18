@@ -5,6 +5,7 @@
 - `version.json` … 最新の版番号・変更内容と、本体の SHA-256(アプリの更新が読みに来る)。手で書かない。
 - `CHANGELOG.md` … 更新履歴。
 - `tools/release.py` … 公開前の確認と、`version.json` の書き出し。
+- `PLUGINS.md` … プラグイン(手元で足す拡張機能)の作りかた。プラグインの実物は、このリポジトリに入れない。
 - `docs/index.html` … 使い方のページ(GitHub Pages で公開)。
 - `docs/sitemap.xml` … 検索エンジン向けのサイトマップ。
 

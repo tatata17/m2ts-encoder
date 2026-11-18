@@ -88,6 +88,7 @@ import re
 import shutil
 import base64
 import hashlib
+import importlib.util
 import subprocess
 import tempfile
 import zlib
@@ -2947,6 +2948,7 @@ MENU_TIPS = {
     "ファイル名の記号を全角に修正": "古い版で ; @ $ { } ~ ` に置き換わっていた記号を、本来の全角の記号に戻します。",
     "変換済みm2tsを削除...": "変換済み(mkv/mp4がある)のm2tsだけを削除します。ごみ箱には入りません。mkv/mp4は削除しません。",
     "作品ごとに仕分け": "仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。実行前に一覧で確認でき、直前の1回は元に戻せます。",
+    "プラグインフォルダを開く": "手元で足す拡張機能(プラグイン)を置くフォルダを開きます。ここに置いた .py は、次に起動したときに読み込まれます。本体を更新しても消えません。中身の分かるものだけを置いてください。",
     "動画ファイルの変換・取り出し": "mp4/mkvなどの動画を、MP4かMKVに作り直します(字幕・音声はコピー、映像はコピーかH.264/H.265)。映像・音声・字幕だけを取り出して保存することもできます。元のファイルは変更しません。",
     "縦横比を直す": "変換済みのmkv/mp4の表示の縦横比(4:3 / 16:9)だけを、再エンコードなしで書き換えます。",
     "二重にエンコードしたファイルを探して削除": "番組名・放送日・開始時刻が同じ変換済みファイルを組にして並べ、残す/削除を1本ずつ決めてまとめて削除します。",
@@ -3237,7 +3239,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.13.1"
+APP_VERSION = "2026.11.19.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6615,6 +6617,174 @@ class SeriesSortWindow(tk.Toplevel):
             messagebox.showinfo("元に戻す", msg, parent=self)
 
 
+# ----------------------------------------------------------------------
+# プラグイン(手元で足す拡張機能)
+#   アプリのデータフォルダの plugins\ に置いた *.py を、起動時にファイル名の順で読み込む。
+#   本体(このファイル)とは別の場所なので、本体を更新しても消えない。
+#   プラグインのファイルには、次の2つを書く:
+#       PLUGIN_API_VERSION = 1          … 下の PLUGIN_API_VERSION と同じ数
+#       def register(host): ...         … host(PluginHost)を使って登録する
+#   プラグインが1つも無ければ、本体の動きは何も変わらない。
+#   注意: プラグインは、このアプリと同じ権限で動く普通のPythonプログラム。中身の分かるものだけを置くこと。
+# ----------------------------------------------------------------------
+PLUGIN_API_VERSION = 1
+PLUGIN_DIR_NAME = "plugins"
+BUILTIN_SCAN_EXTENSIONS = TARGET_EXTENSIONS
+
+
+def get_plugins_dir() -> str:
+    """プラグインを置くフォルダ(無ければ作る)"""
+    path = os.path.join(get_app_data_dir(), PLUGIN_DIR_NAME)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+class PluginHost:
+    """プラグインの register(host) に渡すオブジェクト。プラグインは、これを通して本体に機能を足す。"""
+
+    def __init__(self, app):
+        self.api_version = PLUGIN_API_VERSION
+        self.app = app
+        self._owner = ""  # いま register() を実行中のプラグインの名前(登録の持ち主として記録する)
+        self._menu_items: List[Tuple[str, str]] = []                      # (持ち主, メニューの表示名)
+        self._scan_extensions: List[dict] = []                            # {"owner","ext","var","check"}
+        self._info_providers: List[Tuple[str, object]] = []               # (持ち主, fn)
+        self._output_name_fallbacks: List[Tuple[str, object]] = []        # (持ち主, fn)
+
+    # ---- 設定・ログ
+    @property
+    def settings(self) -> Dict[str, str]:
+        """本体と共有の設定(dict)。自分用の値は、ほかと重ならないキー名で入れること"""
+        return self.app.settings
+
+    def save_settings(self) -> None:
+        save_settings(self.app.settings)
+
+    def log(self, msg) -> None:
+        """本体のログ欄に1行出す(どのスレッドから呼んでもよい)"""
+        self.app._log_threadsafe(str(msg))
+
+    # ---- メニュー
+    def add_tool_menu_item(self, label: str, command) -> None:
+        """「ツール」メニューに項目を足す。command は引数なしで呼べるもの"""
+        if not callable(command):
+            raise TypeError("add_tool_menu_item: command は呼び出せるものにしてください")
+        owner, label = self._owner, str(label)
+
+        def run():
+            try:
+                command()
+            except Exception as e:  # プラグインの中の失敗で、本体を止めない
+                self.log(f"[プラグイン] {owner}: 「{label}」でエラーになりました: {type(e).__name__}: {e}")
+        self.app.tool_menu.add_command(label=label, command=run)
+        self._menu_items.append((owner, label))
+
+    # ---- スキャン
+    def register_scan_extension(self, ext: str, default: bool = True) -> None:
+        """スキャンの対象にする拡張子を足し、検索対象の並びにチェックボックスを出す。
+        この拡張子のファイルは rplsinfo・対になるrpls を使わず、番組情報は register_program_info_provider に任せる"""
+        ext = str(ext).strip().lower()
+        if not ext.startswith("."):
+            ext = "." + ext
+        if not re.fullmatch(r"\.[0-9a-z_\-]{1,16}", ext):
+            raise ValueError(f"register_scan_extension: 拡張子の形が正しくありません: {ext!r}")
+        if ext in BUILTIN_SCAN_EXTENSIONS:
+            raise ValueError(f"register_scan_extension: {ext} は本体が扱う拡張子なので登録できません")
+        if any(e["ext"] == ext for e in self._scan_extensions):
+            return  # すでに登録済み(先に登録したものを使う)
+        app = self.app
+        key = "plugin_scan_ext" + ext            # チェックの状態は、設定に覚えておく
+        saved = app.settings.get(key)
+        var = tk.BooleanVar(value=(saved != "0") if saved in ("0", "1") else bool(default))
+
+        def toggled():
+            app.settings[key] = "1" if var.get() else "0"
+            save_settings(app.settings)
+            app.start_scan()
+        check = ttk.Checkbutton(app.scan_frame, text=ext, variable=var, command=toggled)
+        after = self._scan_extensions[-1]["check"] if self._scan_extensions else app.include_rpls_check
+        check.pack(side=tk.LEFT, padx=(10, 0), after=after)
+        self._scan_extensions.append({"owner": self._owner, "ext": ext, "var": var, "check": check})
+
+    def register_program_info_provider(self, fn) -> None:
+        """fn(path) が {"program_name": str, "channel": str, "broadcast_date": str} か None を返す。
+        スキャンのとき、rpls から番組名が取れなかったファイルについて、登録した順に呼ばれる
+        (画面とは別のスレッドで呼ばれるので、fn の中で画面の部品を触らないこと)"""
+        if not callable(fn):
+            raise TypeError("register_program_info_provider: fn は呼び出せるものにしてください")
+        self._info_providers.append((self._owner, fn))
+
+    def register_output_name_fallback(self, fn) -> None:
+        """fn(row, output_path) が新しい出力パスか None を返す。
+        エンコード後、rplsinfo から名前が取れなかったときに、本体のふだんの処理より前に、登録した順に呼ばれる。
+        row はその行の情報(dict の写し)。fn が自分で名前を変えてそのパスを返してもよいし、
+        付けたい名前のパスだけを返してもよい(その場合は本体が名前を変える。同じ名前がすでにあれば変えない)。
+        (画面とは別のスレッドで呼ばれる)"""
+        if not callable(fn):
+            raise TypeError("register_output_name_fallback: fn は呼び出せるものにしてください")
+        self._output_name_fallbacks.append((self._owner, fn))
+
+    # ---- ここから下は本体が使う(プラグインからは使わない)
+    def _drop_owner(self, owner: str) -> None:
+        """読み込みに失敗したプラグインが、途中まで登録したものを取り消す"""
+        for entry in [e for e in self._scan_extensions if e["owner"] == owner]:
+            try:
+                entry["check"].destroy()
+            except Exception:
+                pass
+        self._scan_extensions = [e for e in self._scan_extensions if e["owner"] != owner]
+        self._info_providers = [x for x in self._info_providers if x[0] != owner]
+        self._output_name_fallbacks = [x for x in self._output_name_fallbacks if x[0] != owner]
+        for item_owner, label in [m for m in self._menu_items if m[0] == owner]:
+            try:
+                self.app.tool_menu.delete(self.app.tool_menu.index(label))
+            except Exception:
+                pass
+        self._menu_items = [m for m in self._menu_items if m[0] != owner]
+
+    def _all_scan_extensions(self) -> Tuple[str, ...]:
+        return tuple(e["ext"] for e in self._scan_extensions)
+
+    def _enabled_scan_extensions(self) -> Tuple[str, ...]:
+        return tuple(e["ext"] for e in self._scan_extensions if e["var"].get())
+
+    def _program_info(self, path: str) -> Optional[Dict[str, str]]:
+        """番組情報を、登録した順に聞く。最初に dict を返したものを使う"""
+        for owner, fn in list(self._info_providers):
+            try:
+                got = fn(path)
+            except Exception as e:
+                self.log(f"[プラグイン] {owner}: 番組情報の取得でエラーになりました({os.path.basename(path)}): {type(e).__name__}: {e}")
+                continue
+            if isinstance(got, dict):
+                return {k: str(got.get(k) or "") for k in ("program_name", "channel", "broadcast_date")}
+        return None
+
+    def _output_name(self, row: Optional[dict], output_path: str) -> Optional[str]:
+        """出力の名前を、登録した順に聞く。使えるパスが返ったら、それを返す"""
+        for owner, fn in list(self._output_name_fallbacks):
+            try:
+                got = fn(dict(row or {}), output_path)
+            except Exception as e:
+                self.log(f"[プラグイン] {owner}: 出力名の決定でエラーになりました: {type(e).__name__}: {e}")
+                continue
+            if not got or not isinstance(got, str):
+                continue
+            if os.path.normcase(os.path.abspath(got)) == os.path.normcase(os.path.abspath(output_path)):
+                return output_path
+            if os.path.isfile(got) and not os.path.isfile(output_path):
+                return got                      # プラグインが自分で名前を変えた
+            if os.path.isfile(output_path) and not os.path.exists(got):
+                try:                            # 付けたい名前だけが返った → 本体が名前を変える
+                    os.rename(output_path, got)
+                    return got
+                except OSError as e:
+                    self.log(f"[プラグイン] {owner}: 出力名を変えられませんでした: {e}")
+                    continue
+            self.log(f"[プラグイン] {owner}: 返された出力名は使えませんでした(同じ名前のファイルがある、など): {os.path.basename(got)}")
+        return None
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -6686,6 +6856,8 @@ class App(tk.Tk):
         self._refresh_bat_combo()
         if getattr(self, "_folder_note", ""):
             self.after(300, lambda: self._append_log("[対象フォルダ] " + self._folder_note))
+        self.plugin_host = PluginHost(self)
+        self._load_plugins()  # 最初のスキャン(下の after)が始まる前に読み込む
         if self.settings.get("auto_update_check", "1") != "0":
             # スキャンの前に更新を確認する。新しい版があれば先に案内を出し、答えたあとでスキャンを始める。
             # 確認が遅い(ネットが遅い・つながらない)場合は待たず、3秒でスキャンを始める
@@ -6695,6 +6867,63 @@ class App(tk.Tk):
             self.after(3000, self._start_scan_fallback)
         else:
             self.after(100, self.start_scan)
+
+    # ------------------------------------------------------------------
+    # プラグイン
+    # ------------------------------------------------------------------
+    def _log_threadsafe(self, line: str):
+        """ログ欄に1行出す。画面のスレッド以外から呼ばれたときは、画面のスレッドに回す"""
+        if threading.current_thread() is threading.main_thread():
+            self._append_log(line)
+        else:
+            try:
+                self.after(0, lambda: self._append_log(line))
+            except Exception:
+                pass
+
+    def _load_plugins(self):
+        """plugins フォルダの *.py を、ファイル名の順に読み込む。1つが失敗しても、本体とほかのプラグインは動かす"""
+        host = self.plugin_host
+        try:
+            folder = get_plugins_dir()
+            names = sorted(n for n in os.listdir(folder) if n.lower().endswith(".py") and os.path.isfile(os.path.join(folder, n)))
+        except Exception as e:
+            self._append_log(f"[プラグイン] プラグインフォルダを読めませんでした: {e}")
+            return
+        for index, name in enumerate(names):
+            host._owner = name
+            try:
+                spec = importlib.util.spec_from_file_location(f"m2ts_encoder_plugin_{index}", os.path.join(folder, name))
+                if spec is None or spec.loader is None:
+                    raise ImportError("読み込めない形式です")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                version = getattr(module, "PLUGIN_API_VERSION", None)
+                if version != PLUGIN_API_VERSION or isinstance(version, bool):
+                    self._append_log(
+                        f"[プラグイン] {name}: 読み込みませんでした(PLUGIN_API_VERSION が {version!r}。この本体は {PLUGIN_API_VERSION})"
+                    )
+                    continue
+                register = getattr(module, "register", None)
+                if not callable(register):
+                    self._append_log(f"[プラグイン] {name}: 読み込みませんでした(register(host) がありません)")
+                    continue
+                register(host)
+                self._append_log(f"[プラグイン] {name}: 読み込みました")
+            except BaseException as e:  # SystemExit なども含めて、本体は落とさない
+                if isinstance(e, KeyboardInterrupt):
+                    raise
+                host._drop_owner(name)  # 途中まで登録したものは取り消す
+                self._append_log(f"[プラグイン] {name}: エラーのため無効にしました: {type(e).__name__}: {e}")
+            finally:
+                host._owner = ""
+
+    def _open_plugins_folder(self):
+        try:
+            folder = get_plugins_dir()
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except Exception as e:
+            messagebox.showerror("エラー", f"プラグインフォルダを開けませんでした。\n{e}", parent=self)
 
     def _start_scan_once(self):
         if getattr(self, "_scan_started", True):
@@ -6737,7 +6966,7 @@ class App(tk.Tk):
         self._build_menu()
 
         # ---- ① 対象: スキャンと検索対象 ----
-        scan_frame = ttk.Frame(self, padding=(8, 0, 8, 6))
+        scan_frame = self.scan_frame = ttk.Frame(self, padding=(8, 0, 8, 6))  # プラグインがチェックボックスを足す
         scan_frame.pack(fill=tk.X)
         self.rescan_button = ttk.Button(scan_frame, text="再スキャン", command=self.start_scan)
         self.rescan_button.pack(side=tk.LEFT)
@@ -6930,7 +7159,7 @@ class App(tk.Tk):
         menubar.add_cascade(label="ファイル", menu=file_menu)
         self.csv_button = MenuEntryProxy(file_menu, csv_index)
 
-        tool_menu = tk.Menu(menubar, tearoff=0)
+        tool_menu = self.tool_menu = tk.Menu(menubar, tearoff=0)  # プラグインが項目を足す
         sort_menu = tk.Menu(tool_menu, tearoff=0)
         sort_menu.add_command(label="まとめて仕分け(チャンネル別→作品ごと)...", command=self._sort_channel_then_series)
         sort_menu.add_separator()
@@ -6947,6 +7176,8 @@ class App(tk.Tk):
         tool_menu.add_command(label="二重にエンコードしたファイルを探して削除...", command=self._open_duplicates)
         tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
         delete_converted_index = tool_menu.index("end")
+        tool_menu.add_separator()
+        tool_menu.add_command(label="プラグインフォルダを開く", command=self._open_plugins_folder)
         menubar.add_cascade(label="ツール", menu=tool_menu)
         # 項目の番号は、足した直後に取る(項目を増やしても、ずれないように)
         self.sort_button = MenuEntryProxy(tool_menu, sort_index)
@@ -7095,13 +7326,18 @@ class App(tk.Tk):
             for ext, enabled in ((".m2ts", self.include_m2ts_var.get()), (".rpls", self.include_rpls_var.get()))
             if enabled
         )
+        plugin_extensions = self.plugin_host._all_scan_extensions()  # プラグインが足した拡張子(無ければ空)
+        extensions += self.plugin_host._enabled_scan_extensions()
         if not extensions:
             for row in self.tree.get_children():
                 self.tree.delete(row)
             self.results = []
             self.row_data = {}
             self._row_order = []
-            self.status_var.set(".m2ts / .rpls のどちらか一方は検索対象にチェックしてください。")
+            self.status_var.set(
+                " / ".join(BUILTIN_SCAN_EXTENSIONS + plugin_extensions) + " のどれか1つは検索対象にチェックしてください。"
+                if plugin_extensions else ".m2ts / .rpls のどちらか一方は検索対象にチェックしてください。"
+            )
             return
 
         files = collect_target_files(self.folder, recursive=self.recursive_var.get(), extensions=extensions)
@@ -7139,22 +7375,24 @@ class App(tk.Tk):
         self.rescan_button.state(["disabled"])
         self.status_var.set(f"スキャン開始... (0/{len(files)}件)")
 
-        thread = threading.Thread(target=self._scan_worker, args=(files,), daemon=True)
+        thread = threading.Thread(target=self._scan_worker, args=(files, plugin_extensions), daemon=True)
         thread.start()
         self.after(100, self._poll_queue)
 
-    def _scan_worker(self, files: List[str]):
+    def _scan_worker(self, files: List[str], plugin_extensions: Tuple[str, ...] = ()):
         total = len(files)
         converted_names_cache: Dict[str, List[str]] = {}
 
         for index, path in enumerate(files, start=1):
             base_name = os.path.basename(path)
-            info = get_program_info(self.rplsinfo_path, path)
+            # プラグインが足した拡張子のファイルは、rplsinfo・対になるrpls を使わない(番組情報はプラグインに聞く)
+            plugin_managed = bool(plugin_extensions) and path.lower().endswith(plugin_extensions)
+            info = None if plugin_managed else get_program_info(self.rplsinfo_path, path)
             info_source_path = None
 
             # 録画番組名やチャンネル名が分からないm2tsは、BDAV構成の対応するrplsから
             # 自動で情報を取得しなおす(右クリックの「rplsから番組情報を再取得」と同じ処理)
-            if info is None or not info[1].strip() or not info[2].strip():
+            if not plugin_managed and (info is None or not info[1].strip() or not info[2].strip()):
                 rpls_path = find_paired_rpls(path)
                 if rpls_path:
                     rpls_info = get_program_info(self.rplsinfo_path, rpls_path)
@@ -7172,6 +7410,16 @@ class App(tk.Tk):
                     program_name = NO_PROGRAM_INFO
                 if not channel_name:
                     channel_name = "(不明)"
+
+            if program_name == NO_PROGRAM_INFO and self.plugin_host._info_providers:
+                # rpls から番組名が取れなかったファイルは、プラグインに聞く(登録が無ければ何もしない)
+                plugin_info = self.plugin_host._program_info(path)
+                if plugin_info is not None:
+                    program_name = plugin_info["program_name"].strip() or NO_PROGRAM_INFO
+                    if plugin_info["channel"].strip():
+                        channel_name = plugin_info["channel"].strip()
+                    if plugin_info["broadcast_date"].strip():
+                        broadcast_date = plugin_info["broadcast_date"].strip()
 
             file_dir = os.path.dirname(path)
             # 同名番組(別日放送)を取り違えないよう、録画日付が異なる変換済みは除外して照合する
@@ -9454,7 +9702,7 @@ class App(tk.Tk):
             self.include_rpls_check,
             self.delete_converted_button,
             self.fix_names_item,
-        ):
+        ) + tuple(e["check"] for e in self.plugin_host._scan_extensions):
             try:
                 widget.state([state_disabled])
             except tk.TclError:
@@ -10088,6 +10336,7 @@ class App(tk.Tk):
         info_source: str,
         m2ts_path: str,
         new_csv_names: Optional[List[str]] = None,
+        row: Optional[dict] = None,
     ) -> Optional[str]:
         """
         エンコードが完了した出力ファイル(mkv/mp4)と、対になるcsvを、
@@ -10101,14 +10350,22 @@ class App(tk.Tk):
         if not output_path or not os.path.isfile(output_path):
             return output_path
 
+        def without_rpls_name() -> Optional[str]:
+            # rplsinfo から名前が取れないとき。プラグインの登録があれば先に聞き、無ければ・決まらなければ今までどおり
+            if self.plugin_host._output_name_fallbacks:
+                named = self.plugin_host._output_name(row, output_path)
+                if named:
+                    return named
+            return restore_colon_in_output_filename(output_path)
+
         if not self.rplsinfo_path:
             self.rplsinfo_path = find_rplsinfo()
         if not self.rplsinfo_path:
-            return restore_colon_in_output_filename(output_path)
+            return without_rpls_name()
 
         result = get_program_name_with_date(self.rplsinfo_path, info_source)
         if not result or not result[0]:
-            return restore_colon_in_output_filename(output_path)
+            return without_rpls_name()
 
         program_name, date_digits = result
         directory, filename = os.path.split(output_path)
@@ -10311,7 +10568,8 @@ class App(tk.Tk):
             # バッチ内のcmd.exeによる置換に頼らず、Python側で番組名から直接
             # 正しいファイル名を組み立ててリネームする(コードページ/構文問題を回避するため)
             output_path = self._finalize_output_filename(
-                output_path, info_source_path or m2ts_path, m2ts_path, new_csv_names
+                output_path, info_source_path or m2ts_path, m2ts_path, new_csv_names,
+                row=self.row_data.get(iid),
             )
 
             # 再エンコードだった場合は、結果に応じて旧ファイルを残す/元に戻す
