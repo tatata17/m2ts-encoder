@@ -3239,7 +3239,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.19.1"
+APP_VERSION = "2026.11.19.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6027,9 +6027,8 @@ class BackupManagerWindow(tk.Toplevel):
     def _open_folder(self):
         d = update_backup_dir()
         try:
-            os.makedirs(d, exist_ok=True)
             if sys.platform == "win32":
-                os.startfile(d)  # type: ignore[attr-defined]
+                open_folder_in_explorer(d)
             else:
                 messagebox.showinfo("保存先", d, parent=self)
         except OSError as e:
@@ -6632,6 +6631,16 @@ PLUGIN_DIR_NAME = "plugins"
 BUILTIN_SCAN_EXTENSIONS = TARGET_EXTENSIONS
 
 
+def open_folder_in_explorer(folder: str) -> None:
+    """フォルダをエクスプローラーで開く。
+    Microsoft Store版のPythonでは、%LOCALAPPDATA% への書き込みが、実際にはPython専用の別の場所
+    (...\\Packages\\PythonSoftwareFoundation...\\LocalCache\\Local)に入る。Pythonからは元の場所に見えるが、
+    エクスプローラーからは見えず「場所が利用できません」になるので、実際の場所(realpath)に直してから開く。"""
+    os.makedirs(folder, exist_ok=True)
+    real = os.path.realpath(folder)
+    os.startfile(real if os.path.isdir(real) else folder)  # type: ignore[attr-defined]
+
+
 def get_plugins_dir() -> str:
     """プラグインを置くフォルダ(無ければ作る)"""
     path = os.path.join(get_app_data_dir(), PLUGIN_DIR_NAME)
@@ -6920,8 +6929,7 @@ class App(tk.Tk):
 
     def _open_plugins_folder(self):
         try:
-            folder = get_plugins_dir()
-            os.startfile(folder)  # type: ignore[attr-defined]
+            open_folder_in_explorer(get_plugins_dir())
         except Exception as e:
             messagebox.showerror("エラー", f"プラグインフォルダを開けませんでした。\n{e}", parent=self)
 
@@ -9669,9 +9677,8 @@ class App(tk.Tk):
     def _open_log_folder(self):
         folder = get_run_log_dir()
         try:
-            os.makedirs(folder, exist_ok=True)
             if sys.platform == "win32":
-                os.startfile(folder)  # type: ignore[attr-defined]
+                open_folder_in_explorer(folder)
             else:
                 subprocess.Popen(["xdg-open", folder])
         except Exception as e:
