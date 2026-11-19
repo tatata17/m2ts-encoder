@@ -398,6 +398,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <div class="card"><h4>動画ファイルの変換・取り出し</h4><p>メニュー「ツール」。mp4/mkv/ts/m2tsなどを、MP4・MKV・元の形式に作り直します。字幕・音声は基本コピー、映像はコピー/H.264/H.265(インターレースは自動で解除)。音声はAAC/FLAC/WAVへの変換も可能です。映像だけ・音声だけ・字幕だけを、中身そのままの単体ファイルに取り出すこともできます。元のファイルは変更せず、新しいファイルを作ります。</p></div>
     <div class="card"><h4>縦横比を直す</h4><p>変換済みmkv/mp4の4:3 / 16:9表示を、再エンコードなしで書き換えます。一覧から選ぶか、ドラッグ&amp;ドロップ(要 <code>pip install tkinterdnd2</code>)で追加します。</p></div>
     <div class="card"><h4>ファイル名の記号を全角に修正</h4><p>過去の版で半角記号(<code>;</code> <code>@</code> <code>$</code> など)になったファイル名を、本来の全角へ戻します。</p></div>
+    <div class="card"><h4>プラグイン(拡張機能)</h4><p>手元で機能を足すためのしくみです。メニュー「ツール」→「プラグインフォルダを開く」で開くフォルダに <code>.py</code> を置くと、次に起動したときに読み込まれます。置かなければ、何も変わりません。くわしくは<a href="plugins.html">プラグインのページ</a>へ。</p></div>
     <div class="card"><h4>一覧をCSVに保存</h4><p>メニュー「ファイル」から。</p></div>
     <div class="card"><h4>再生ソフトを選ぶ</h4><p>メニュー「設定」→「再生ソフトを選ぶ...」。右クリックの「再生」や、診断の時刻からの再生に使うソフトを選びます。未指定のときは、VLCが入っていればVLC、無ければWindowsの既定のアプリで開きます。</p></div>
     <div class="card"><h4>右クリックメニュー</h4><p>元のファイルを再生・場所を開く / エンコード後のファイルを再生・場所を開く / エンコード診断 / ノイズ検査 / rplsから番組情報を再取得(BDAV用)。</p></div>
@@ -459,6 +460,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td><code>version.json</code></td><td>最新の版番号と、更新の案内に出す内容(アプリの更新確認が読みます)</td></tr>
     <tr><td><code>README.md</code> / <code>CHANGELOG.md</code></td><td>説明と、更新履歴</td></tr>
     <tr><td><code>docs/index.html</code></td><td>このページ</td></tr>
+    <tr><td><code>docs/plugins.html</code> / <code>PLUGINS.md</code></td><td><a href="plugins.html">プラグインのページ</a>と、その要点</td></tr>
   </table></div>
   <h3>アプリが作るファイル</h3>
   <p>アプリが作るファイルの場所です。どれも、消しても録画やエンコード済みファイルには影響しません(設定を消すと、設定が初期状態に戻ります)。</p>
@@ -467,7 +469,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td><code>m2ts_encoder.pyw</code> と同じフォルダ</td><td><code>ログ/</code>(エンコードのログ。既定は <code>まとめ_実行ログ.txt</code> の1つ)。<code>ffmpeg.exe</code> や <code>rplsinfo.exe</code> を置く場所でもあります。</td></tr>
     <tr><td>対象フォルダの下</td><td><code>仕分け/</code>(チャンネル別・作品ごとの仕分け先)。対象フォルダは、初めは <code>m2ts_encoder.pyw</code> のあるフォルダです。</td></tr>
     <tr><td>録画ファイルの隣</td><td>番組情報とノイズ検査の結果を書いたCSV(<code>番組名.m2ts.csv</code> など)。エンコードしたmkv/mp4も、元のm2tsの隣にできます。</td></tr>
-    <tr><td><code>%LOCALAPPDATA%\m2ts_encoder\</code></td><td>設定(JSON)、<code>backup\</code>(旧版のバックアップ)、作品ごとの仕分けを元に戻すための記録。</td></tr>
+    <tr><td><code>%LOCALAPPDATA%\m2ts_encoder\</code></td><td>設定(JSON)、<code>backup\</code>(旧版のバックアップ)、<code>plugins\</code>(<a href="plugins.html">プラグイン</a>を置くフォルダ)、作品ごとの仕分けを元に戻すための記録。</td></tr>
   </table></div>
   <p class="note">対象フォルダを「フォルダを変更...」で変えると、「仕分け」フォルダもその下に作られます。ログと、ffmpeg・rplsinfo の置き場所は、<code>m2ts_encoder.pyw</code> のフォルダのままです。</p>
 </section>

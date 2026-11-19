@@ -7,6 +7,7 @@
 - `tools/release.py` … 公開前の確認と、`version.json` の書き出し。
 - `PLUGINS.md` … プラグイン(手元で足す拡張機能)の作りかた。プラグインの実物は、このリポジトリに入れない。
 - `docs/index.html` … 使い方のページ(GitHub Pages で公開)。
+- `docs/plugins.html` … プラグインの説明のページ。デザイン(`<style>`)と共通スクリプトは、使い方のページと同じ内容にそろえる。プラグインのしくみを変えたら、このページと `PLUGINS.md` も直す。
 - `docs/sitemap.xml` … 検索エンジン向けのサイトマップ。
 
 ## 公開の手順

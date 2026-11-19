@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>m2ts エンコーダー プラグイン</title>
+<meta name="description" content="m2ts エンコーダーに、手元で拡張機能(プラグイン)を足す方法。置きかた、書きかた、使える機能の一覧">
+<link rel="canonical" href="https://tatata17.github.io/m2ts-encoder/plugins.html">
+<meta name="google-site-verification" content="Pi65-uiIU0ISBp1qHya2CkI0P9VJkaeJJZdWbtwPaOc">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:title" content="m2ts エンコーダー プラグイン">
+<meta property="og:description" content="m2ts エンコーダーに、手元で拡張機能(プラグイン)を足す方法。置きかた、書きかた、使える機能の一覧">
+<meta property="og:url" content="https://tatata17.github.io/m2ts-encoder/plugins.html">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* ===== 共通デザイン(3つの使い方ページで同じものを使います) ===== */
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#1d2430; --muted:#5d6877; --line:#dde2ea;
+  --accent:#0f7b8a; --accent-ink:#ffffff; --accent-soft:#e3f3f5; --warn:#fff4dc; --warn-line:#ecd29a;
+  --code:#eef1f5; --warn-ink:#8a4a10; --shadow:0 1px 2px rgba(20,30,50,.06),0 6px 20px rgba(20,30,50,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f141b; --panel:#171e28; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+    --accent:#4cc3d3; --accent-ink:#06222a; --accent-soft:#12303a; --warn:#2c2616; --warn-line:#6d5a22;
+    --code:#202a37; --warn-ink:#e9a46f; --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f141b; --panel:#171e28; --ink:#e6ebf2; --muted:#9aa6b6; --line:#2a3443;
+  --accent:#4cc3d3; --accent-ink:#06222a; --accent-soft:#12303a; --warn:#2c2616; --warn-line:#6d5a22;
+  --code:#202a37; --warn-ink:#e9a46f; --shadow:none;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:72px}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.85 "Yu Gothic UI","Hiragino Sans","Noto Sans JP","Meiryo",system-ui,sans-serif;-webkit-text-size-adjust:100%}
+a{color:var(--accent);text-underline-offset:3px}
+p{margin:10px 0}
+ul,ol{padding-left:1.4em;margin:8px 0}
+li{margin:4px 0}
+code,kbd{font:.9em/1.4 "Cascadia Mono",Consolas,monospace;background:var(--code);border:1px solid var(--line);padding:.08em .4em;border-radius:5px;overflow-wrap:anywhere}
+kbd{border-bottom-width:2px}
+pre{background:var(--code);border:1px solid var(--line);padding:14px 16px;border-radius:10px;overflow:auto;line-height:1.6;font:14px/1.6 "Cascadia Mono",Consolas,monospace}
+pre code{background:none;border:none;padding:0}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px;border-radius:6px}
+
+/* ヘッダー */
+header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--panel) 92%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1120px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px}
+.logo{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-ink);font:700 13px/1 "Cascadia Mono",Consolas,monospace;flex:none}
+.brand{font-weight:700;letter-spacing:.02em;white-space:nowrap}
+.brand small{font-weight:400;color:var(--muted);margin-left:8px}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);
+  padding:8px 16px;border-radius:999px;font-weight:700;text-decoration:none;cursor:pointer;font-size:15px;line-height:1.4}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent;color:var(--accent)}
+.icon-btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;height:38px;padding:0 14px;cursor:pointer;font:inherit;font-size:14px;white-space:nowrap}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.toc-btn{display:none;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:10px;height:38px;padding:0 14px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap}
+
+/* レイアウトと目次 */
+.layout{max-width:1120px;margin:0 auto;padding:0 16px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
+nav.toc{position:sticky;top:72px;align-self:start;max-height:calc(100vh - 90px);overflow:auto;padding:28px 0}
+nav.toc ol{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
+nav.toc li{margin:0}
+nav.toc a{display:block;padding:5px 12px;margin-left:-2px;border-left:2px solid transparent;color:var(--muted);text-decoration:none;font-size:14.5px;line-height:1.5}
+nav.toc a:hover{color:var(--ink)}
+nav.toc a.on{color:var(--accent);border-left-color:var(--accent);font-weight:700}
+nav.toc .tn{display:inline-block;min-width:1.9em;color:var(--muted);font:12.5px/1 "Cascadia Mono",Consolas,monospace}
+main{padding:28px 0 80px;min-width:0}
+
+/* ヒーロー(いちばん上の紹介) */
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px 28px 24px;box-shadow:var(--shadow);margin-top:0}
+.hero h1{margin:0 0 6px;font-size:clamp(26px,4.5vw,36px);line-height:1.3}
+.hero>p:not(.note){margin:.4em 0;color:var(--muted)}
+.feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:18px 0 0;padding:0;list-style:none}
+.feat li{background:var(--accent-soft);border-radius:12px;padding:10px 14px;font-size:15px;line-height:1.6;margin:0}
+.hero .row{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:18px;align-items:center}
+.hero .note{margin-bottom:0}
+.ver{font-size:14px;color:var(--muted)}
+.quick{background:var(--accent-soft);border-radius:12px;padding:12px 18px;margin:16px 0 0}
+.quick>b{display:block;font-size:17px}
+.quick ol{margin:4px 0 0}
+
+/* 章 */
+section{margin-top:44px}
+h2{font-size:24px;margin:0 0 14px;line-height:1.4;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h2 .n{display:inline-block;min-width:1.9em;height:1.9em;line-height:1.9em;text-align:center;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:.7em;margin-right:10px;vertical-align:.12em}
+h3{font-size:18px;margin:26px 0 8px}
+
+/* 注意書き: note=ヒント・補足 / warn=注意 */
+.note,.warn{border-radius:12px;padding:12px 16px;margin:16px 0;font-size:15px;border:1px solid var(--line)}
+.note{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+.warn{background:var(--warn);border-color:var(--warn-line)}
+.lb{display:block;margin-bottom:2px}
+.note>.lb{color:var(--accent)}
+.warn>.lb{color:var(--warn-ink)}
+.muted{color:var(--muted)}
+p.muted{font-size:14px}
+
+/* 表(スマホでは1行=1枚のカードになります) */
+.table-wrap{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+tr:last-child td{border-bottom:none}
+th{background:var(--accent-soft);white-space:nowrap}
+td:first-child{min-width:8.5em}
+
+/* 手順 */
+.steps{counter-reset:s;list-style:none;padding:0;margin:12px 0}
+.steps>li{counter-increment:s;position:relative;padding:4px 0 10px 44px;margin:0}
+.steps>li::before{content:counter(s);position:absolute;left:0;top:3px;width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:700}
+.steps>li>strong:first-child{display:block}
+
+/* 小さなカード */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;box-shadow:var(--shadow)}
+.card h4{margin:0 0 4px;font-size:15px;color:var(--accent)}
+.card p{margin:0;font-size:14.5px;line-height:1.7}
+
+/* 画面のイメージ図(説明用の図) */
+.mock{margin:18px 0 6px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);font-size:13px;line-height:1.5}
+.mock .bar{background:var(--code);padding:6px 12px;border-bottom:1px solid var(--line);color:var(--muted)}
+.mock .muted{color:var(--muted)}
+.mock .b{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:0 9px;background:var(--panel);margin:2px 2px 2px 0;white-space:nowrap}
+.mock .b.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.mock fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:4px 10px 8px;min-width:0}
+.mock legend{padding:0 6px;font-weight:700;color:var(--accent)}
+.mock .list{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.mock .list div{border-bottom:1px solid var(--line)}
+.mock .list div:last-child{border-bottom:none}
+.mock .list div:first-child{background:var(--code);font-weight:700}
+.mock .list div.sel{background:var(--accent-soft)}
+.mock .tabs span{display:inline-block;padding:2px 10px;border:1px solid var(--line);border-bottom:none;border-radius:6px 6px 0 0;margin-right:4px;color:var(--muted)}
+.mock .tabs span.on{background:var(--accent-soft);color:var(--ink);font-weight:700}
+.mock-cap{color:var(--muted);font-size:13.5px;margin:4px 0 14px}
+
+/* 更新履歴(日付ごと。新しい日だけ開いておき、古い日は折りたたみ) */
+.day,.fold{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:12px 0;box-shadow:var(--shadow)}
+.day>summary,.fold>summary{cursor:pointer;list-style:none}
+.day>summary::-webkit-details-marker,.fold>summary::-webkit-details-marker{display:none}
+.day>summary::before,.fold>summary::before{content:"▸";display:inline-block;width:1.2em;color:var(--muted)}
+.day[open]>summary::before,.fold[open]>summary::before{content:"▾"}
+.fold>summary{font-weight:700}
+.day .d{font-weight:700;font-size:17px}
+.day .vr{color:var(--muted);font-size:13.5px;margin-left:8px}
+.day .new{font-size:12px;color:var(--accent-ink);background:var(--accent);border-radius:999px;padding:1px 9px;margin-left:8px;font-weight:700}
+.day ul{margin:8px 0 2px}
+.day .tag{font-size:12px;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:0 8px;margin-right:6px;white-space:nowrap}
+
+footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var(--muted);font-size:14px}
+
+@media (max-width:820px){
+  .logo{display:none}
+  .layout{grid-template-columns:1fr;gap:0}
+  .toc-btn{display:inline-flex;align-items:center}
+  .top-in{gap:8px;padding:8px 12px}
+  .btn.ghost{padding:6px 12px;font-size:14px}
+  nav.toc{display:none;position:fixed;top:58px;left:10px;right:10px;max-height:72vh;overflow:auto;padding:10px;z-index:30;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+  nav.toc.open{display:block}
+  nav.toc ol{border:none}
+  nav.toc a{border:none;border-radius:8px;margin:0;padding:9px 12px;font-size:16px}
+  nav.toc a.on{background:var(--accent-soft)}
+  .brand{font-size:15px;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .brand small{display:none}
+  .icon-btn{padding:0 10px;font-size:13px}
+  .hero{padding:20px 18px}
+}
+/* スマホでは、表を「1行=1枚のカード」に並べ替える(横に狭くならないように) */
+@media (max-width:640px){
+  .table-wrap{border:none;background:none;overflow:visible}
+  .table-wrap table,.table-wrap tbody,.table-wrap tr,.table-wrap td{display:block;width:100%}
+  .table-wrap tr:first-child{display:none}
+  .table-wrap tr{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:0 0 10px;padding:8px 12px;box-shadow:var(--shadow)}
+  .table-wrap td{border:none;padding:3px 0}
+  .table-wrap td:first-child{font-weight:700;padding-top:2px}
+  .table-wrap td[data-label]:not(:first-child)::before{content:attr(data-label);display:block;font-size:12px;color:var(--muted);letter-spacing:.04em}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+
+/* ===== このページだけの部品 ===== */
+.mock .body{padding:12px;display:grid;gap:8px}
+.mock .menu span{margin-right:14px;color:var(--muted)}
+.mock .list div{display:grid;grid-template-columns:1.1fr 2.4fr 1.4fr 1.2fr .8fr;gap:6px;padding:3px 8px}
+.mock .list div.ok{background:color-mix(in srgb,#2ea44f 18%,transparent)}
+.mock .list div.ng{background:color-mix(in srgb,#d73a49 12%,transparent)}
+.mock fieldset{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 10px}
+.mock .logbox{border:1px solid var(--line);border-radius:8px;background:var(--code);color:var(--muted);padding:6px 10px;font-family:Consolas,monospace;font-size:12px}
+@media (max-width:820px){
+  .mock .list div{grid-template-columns:1fr 2fr 1.2fr}
+  .mock .list div span:nth-child(n+4){display:none}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <button class="toc-btn" id="tocBtn" type="button" aria-expanded="false" aria-controls="toc">目次</button>
+    <span class="logo" aria-hidden="true">m2</span>
+    <div class="brand">m2ts エンコーダー<small>プラグイン</small></div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="https://github.com/tatata17/m2ts-encoder">GitHub</a>
+    <button class="icon-btn" id="theme" type="button" aria-label="ライト/ダークを切り替え" title="ライト/ダークを切り替え">暗い表示</button>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" id="toc" aria-label="目次">
+  <ol>
+    <li><a href="#about"><span class="tn"></span>はじめに</a></li>
+    <li><a href="#what"><span class="tn">01</span>プラグインとは</a></li>
+    <li><a href="#place"><span class="tn">02</span>置きかた</a></li>
+    <li><a href="#sample"><span class="tn">03</span>最小の例</a></li>
+    <li><a href="#api"><span class="tn">04</span>host で使えるもの</a></li>
+    <li><a href="#rules"><span class="tn">05</span>読み込みの決まり</a></li>
+    <li><a href="#trouble"><span class="tn">06</span>困ったとき</a></li>
+    <li><a href="#files"><span class="tn">07</span>ファイルの場所</a></li>
+  </ol>
+</nav>
+
+<main>
+<section class="hero" id="about">
+  <h1>プラグイン</h1>
+  <p>m2ts エンコーダーに、手元で拡張機能を足すためのしくみです。このページは、プラグインを置く人・作る人向けの説明です。ふだんの使い方は、<a href="./">使い方ガイド</a>をご覧ください。</p>
+  <ul class="feat">
+    <li>本体とは別のファイルなので、本体を更新しても消えません</li>
+    <li>「ツール」メニューに項目を足せます</li>
+    <li>スキャンの対象にする拡張子を足せます</li>
+    <li>番組情報や、エンコード後の名前を決められます</li>
+  </ul>
+  <div class="row">
+    <a class="btn" id="dl" href="https://github.com/tatata17/m2ts-encoder/raw/main/m2ts_encoder.pyw">⬇ m2ts_encoder.pyw をダウンロード</a>
+    <span class="ver" id="ver"></span>
+  </div>
+  <p class="warn"><b class="lb">注意</b>プラグインは、アプリと同じ権限で動く普通のプログラムです。パソコンの中のファイルを読んだり、消したりもできます。中身の分かるものだけを置いてください。</p>
+</section>
+
+<section id="what">
+  <h2><span class="n">01</span>プラグインとは</h2>
+  <p>プラグインは、Python で書いた小さなファイル(<code>.py</code>)です。決まったフォルダに置いておくと、アプリが起動するときに読み込んで、機能を足します。</p>
+  <p>アプリ本体(<code>m2ts_encoder.pyw</code>)は、更新のたびに新しいファイルに入れ替わります。プラグインは別のフォルダにあるので、更新しても残ります。</p>
+  <p class="note"><b class="lb">ヒント</b>プラグインを1つも置いていなければ、アプリの動きは何も変わりません。プラグインを自動で入手するしくみは、ありません。</p>
+  <p>プラグインは、バージョン 2026.11.19.2 から使えます。</p>
+</section>
+
+<section id="place">
+  <h2><span class="n">02</span>置きかた</h2>
+  <ol class="steps">
+    <li><strong>プラグインフォルダを開く</strong>メニュー「ツール」→「プラグインフォルダを開く」を選びます。フォルダが無ければ、アプリが作ります。</li>
+    <li><strong>ファイルを置く</strong>開いたフォルダに、プラグインの <code>.py</code> を入れます。</li>
+    <li><strong>アプリを起動しなおす</strong>プラグインは、起動するときにだけ読み込まれます。読み込めると、ログの欄に「[プラグイン] ファイル名: 読み込みました」と出ます。</li>
+  </ol>
+  <p>外すときは、フォルダからファイルを消して(または別の場所へ移して)、アプリを起動しなおします。</p>
+  <p class="note"><b class="lb">補足</b>フォルダは、メニューから開くのが確実です。Python の入れかたによっては、実際の場所が <code>%LOCALAPPDATA%\m2ts_encoder\plugins</code> とは別のフォルダになることがあります。</p>
+</section>
+
+<section id="sample">
+  <h2><span class="n">03</span>最小の例</h2>
+  <p>プラグインのファイルには、次の2つを書きます。</p>
+  <div class="table-wrap"><table>
+    <tr><th>書くもの</th><th>内容</th></tr>
+    <tr><td><code>PLUGIN_API_VERSION = 1</code></td><td>このプラグインが合わせている、しくみの版です。本体の数と違うと、読み込まれません。今は <code>1</code> です。</td></tr>
+    <tr><td><code>def register(host):</code></td><td>起動するときに、1回だけ呼ばれます。この中で、<code>host</code> を使って機能を登録します。</td></tr>
+  </table></div>
+  <p>動きを確かめるための、小さな例です。<code>sample_plugin.py</code> のような名前で保存して、プラグインフォルダに置きます。</p>
+<pre><code>PLUGIN_API_VERSION = 1
+
+
+def register(host):
+    host.log("[sample] プラグインを読み込みました")
+    host.add_tool_menu_item("サンプルプラグインの挨拶", lambda: host.log("[sample] こんにちは"))
+    host.register_scan_extension(".sample", default=True)
+    host.register_program_info_provider(
+        lambda path: {"program_name": "サンプル番組", "channel": "サンプルch", "broadcast_date": "2026/01/01"}
+        if path.lower().endswith(".sample") else None
+    )</code></pre>
+  <p>起動しなおすと、次の3つが起きます。</p>
+  <ul>
+    <li>ログの欄に「[sample] プラグインを読み込みました」と出ます。</li>
+    <li>「ツール」メニューの一番下に「サンプルプラグインの挨拶」が増えます。選ぶと、ログの欄に「[sample] こんにちは」と出ます。</li>
+    <li>検索対象の <code>.rpls</code> の右に、<code>.sample</code> のチェックボックスが増えます。対象フォルダに <code>.sample</code> で終わるファイルがあれば、番組名「サンプル番組」の行として一覧に出ます。</li>
+  </ul>
+</section>
+
+<section id="api">
+  <h2><span class="n">04</span>host で使えるもの</h2>
+  <p><code>register(host)</code> に渡される <code>host</code> から、次のものが使えます。</p>
+  <div class="table-wrap"><table>
+    <tr><th>名前</th><th>内容</th></tr>
+    <tr><td><code>host.api_version</code></td><td>本体のしくみの版(整数)です。</td></tr>
+    <tr><td><code>host.app</code></td><td>アプリのメインウインドウです。本体の中身に直接さわれますが、本体の更新で変わることがあります。</td></tr>
+    <tr><td><code>host.settings</code></td><td>本体と共有の設定(dict)です。自分用の値は、ほかと重ならないキーの名前で入れます。</td></tr>
+    <tr><td><code>host.save_settings()</code></td><td>設定をファイルに保存します。</td></tr>
+    <tr><td><code>host.log(msg)</code></td><td>ログの欄に1行出します。どのスレッドから呼んでもかまいません。</td></tr>
+    <tr><td><code>host.add_tool_menu_item(label, command)</code></td><td>「ツール」メニューに項目を足します。</td></tr>
+    <tr><td><code>host.register_scan_extension(ext, default=True)</code></td><td>スキャンの対象にする拡張子を足します。</td></tr>
+    <tr><td><code>host.register_program_info_provider(fn)</code></td><td>番組情報を返す関数を登録します。</td></tr>
+    <tr><td><code>host.register_output_name_fallback(fn)</code></td><td>エンコード後の名前を決める関数を登録します。</td></tr>
+  </table></div>
+
+  <h3>メニューの項目を足す</h3>
+  <p><code>host.add_tool_menu_item(label, command)</code> は、「ツール」メニューの一番下に項目を足します。<code>command</code> には、引数なしで呼べるものを渡します。</p>
+  <p>項目を選んだときにプラグインの中でエラーになっても、アプリは止まりません。エラーの内容が、ログの欄に出ます。</p>
+
+  <h3>スキャンする拡張子を足す</h3>
+  <p><code>host.register_scan_extension(ext, default=True)</code> は、スキャンの対象にする拡張子を足し、検索対象の並びにチェックボックスを出します。</p>
+  <ul>
+    <li>チェックの状態は、アプリが覚えます。<code>default</code> は、まだ覚えていないときの初めの状態です。</li>
+    <li>拡張子は、<code>.</code> のあとに半角の英数字・<code>_</code>・<code>-</code> を16文字までで書きます。大文字と小文字は区別しません。</li>
+    <li><code>.m2ts</code> と <code>.rpls</code> は本体が扱うので、登録できません。</li>
+    <li>この拡張子のファイルは、番組情報をまずプラグインに聞きます。そこで取れなかったときだけ、ファイルそのものから番組情報を読みます(2026.11.19.3 から)。対になる rpls は探しません。</li>
+  </ul>
+  <p class="note"><b class="lb">補足</b>「変換済みm2tsを削除」とノイズ検査は、<code>.m2ts</code> のファイルだけが対象です。プラグインが足した拡張子の行には、効きません。</p>
+
+  <h3>番組情報を返す</h3>
+  <p><code>host.register_program_info_provider(fn)</code> で、番組情報を返す関数を登録します。</p>
+  <ul>
+    <li><code>fn(path)</code> は、<code>{"program_name": 番組名, "channel": チャンネル, "broadcast_date": 放送日}</code> の dict を返します。そのファイルについて分からないときは、<code>None</code> を返します。</li>
+    <li>放送日は <code>2026/01/01</code> の形で書きます。空にした項目は、本体の値のままになります。</li>
+    <li>呼ばれるのは、スキャンのときに、本体が番組名を取れなかったファイルです。<code>.m2ts</code> のファイルでも、番組名が取れなければ呼ばれます。</li>
+    <li>いくつも登録されているときは、登録した順に呼ばれ、最初に dict を返したものが使われます。</li>
+  </ul>
+
+  <h3>エンコード後の名前を決める</h3>
+  <p><code>host.register_output_name_fallback(fn)</code> で、エンコード後のファイルの名前を決める関数を登録します。</p>
+  <ul>
+    <li><code>fn(row, output_path)</code> は、新しいファイルのパスを返します。決めないときは、<code>None</code> を返します。</li>
+    <li><code>row</code> は、その行の情報(dict の写し)です。<code>path</code>(元のファイル)、<code>program_name</code>、<code>channel</code>、<code>broadcast_date</code> などが入っています。</li>
+    <li>呼ばれるのは、エンコードのあとで、本体が録画から番組名を取れなかったときです。本体のふだんの名前付けより前に、登録した順に呼ばれます。</li>
+    <li>付けたい名前のパスだけを返すと、本体が名前を変えます。同じ名前のファイルがすでにあるときは、変えません。関数の中で名前を変えてから、そのパスを返してもかまいません。</li>
+  </ul>
+
+  <p class="warn"><b class="lb">注意</b>番組情報の関数と、名前を決める関数は、画面とは別のスレッドで呼ばれます。関数の中で、ボタンや一覧など、画面の部品にさわらないでください。ログを出すときは <code>host.log</code> を使います。</p>
+</section>
+
+<section id="rules">
+  <h2><span class="n">05</span>読み込みの決まり</h2>
+  <ul>
+    <li>プラグインフォルダの直下にある <code>.py</code> を、ファイル名の順に読み込みます。フォルダの中のフォルダは見ません。</li>
+    <li>読み込むのは、アプリを起動したときだけです。最初のスキャンが始まる前に読み込みます。</li>
+    <li>1つのプラグインがうまく読み込めなくても、アプリと、ほかのプラグインは動きます。</li>
+    <li>途中でエラーになったプラグインは、そのプラグインだけ無効になります。それまでに登録したメニューの項目やチェックボックスも、取り消されます。</li>
+  </ul>
+  <p>読み込みの結果は、起動したときにログの欄に出ます。</p>
+  <div class="table-wrap"><table>
+    <tr><th>ログの表示</th><th>意味</th></tr>
+    <tr><td>読み込みました</td><td>登録まで終わりました。</td></tr>
+    <tr><td>読み込みませんでした(PLUGIN_API_VERSION が …)</td><td><code>PLUGIN_API_VERSION</code> が無いか、本体の数と違います。</td></tr>
+    <tr><td>読み込みませんでした(register(host) がありません)</td><td><code>register</code> という関数がありません。</td></tr>
+    <tr><td>エラーのため無効にしました: …</td><td>読み込みの途中でエラーになりました。「:」のあとが、エラーの内容です。</td></tr>
+  </table></div>
+</section>
+
+<section id="trouble">
+  <h2><span class="n">06</span>困ったとき</h2>
+  <div class="table-wrap"><table>
+    <tr><th>こんなとき</th><th>確かめること</th></tr>
+    <tr><td>ファイルを置いたのに、何も起きない</td><td>アプリを起動しなおしましたか。ファイルの名前は <code>.py</code> で終わっていますか。「プラグインフォルダを開く」で開いたフォルダに置きましたか。</td></tr>
+    <tr><td>「読み込みませんでした」と出る</td><td>ファイルに <code>PLUGIN_API_VERSION = 1</code> と <code>def register(host):</code> があるかを確かめます。</td></tr>
+    <tr><td>「エラーのため無効にしました」と出る</td><td>「:」のあとのエラーの内容を見て、プラグインを直します。直したら、アプリを起動しなおします。</td></tr>
+    <tr><td>足した拡張子のファイルが、一覧に出ない</td><td>検索対象の、その拡張子のチェックボックスにチェックが入っているかを確かめます。</td></tr>
+    <tr><td>アプリの調子がおかしくなった</td><td>プラグインフォルダを空にして、起動しなおします。それで直れば、プラグインが原因です。</td></tr>
+    <tr><td>本体を更新したら、プラグインが動かなくなった</td><td><code>host.app</code> から本体の中身に直接さわっていると、本体の更新で動かなくなることがあります。上の表にある <code>host</code> の機能だけを使うと、影響を受けにくくなります。</td></tr>
+  </table></div>
+</section>
+
+<section id="files">
+  <h2><span class="n">07</span>ファイルの場所</h2>
+  <div class="table-wrap"><table>
+    <tr><th>場所</th><th>中身</th></tr>
+    <tr><td><code>%LOCALAPPDATA%\m2ts_encoder\plugins\</code></td><td>プラグインを置くフォルダです。メニュー「ツール」→「プラグインフォルダを開く」で開けます。</td></tr>
+    <tr><td><code>%LOCALAPPDATA%\m2ts_encoder\</code> の設定(JSON)</td><td>足した拡張子のチェックの状態と、プラグインが <code>host.settings</code> に入れた値が入ります。</td></tr>
+    <tr><td><a href="https://github.com/tatata17/m2ts-encoder/blob/main/PLUGINS.md">PLUGINS.md</a></td><td>このページの要点をまとめたものです(GitHub のリポジトリ)。</td></tr>
+  </table></div>
+  <p>GitHub のリポジトリには、プラグインの実物は入っていません。</p>
+</section>
+
+<footer>
+  <a href="./">使い方ガイドへ戻る</a> ・ <a href="https://github.com/tatata17/m2ts-encoder">GitHub リポジトリ</a> ・ 不具合やご要望は <a href="https://github.com/tatata17/m2ts-encoder/issues">Issues</a> へ
+</footer>
+</main>
+</div>
+
+<script>window.DOC={repo:"tatata17/m2ts-encoder",file:"m2ts_encoder.pyw"};</script>
+<script>
+(function(){
+  var C=window.DOC||{};
+  var root=document.documentElement;
+  function $(id){return document.getElementById(id);}
+  function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+
+  // 明るい/暗い表示の切り替え(選んだものはこのブラウザに覚える)
+  var themeBtn=$("theme");
+  function isDark(){var t=root.getAttribute("data-theme");return t?t==="dark":matchMedia("(prefers-color-scheme: dark)").matches;}
+  function syncTheme(){themeBtn.textContent=isDark()?"明るい表示":"暗い表示";}
+  themeBtn.addEventListener("click",function(){
+    var next=isDark()?"light":"dark";root.setAttribute("data-theme",next);
+    try{localStorage.setItem("theme",next);}catch(e){}
+    syncTheme();
+  });
+  syncTheme();
+
+  // スマホの目次(ボタンで開閉。項目を押す・外を押す・Esc で閉じる)
+  var toc=$("toc"),tocBtn=$("tocBtn");
+  function closeToc(){toc.classList.remove("open");tocBtn.setAttribute("aria-expanded","false");}
+  tocBtn.addEventListener("click",function(ev){ev.stopPropagation();var o=toc.classList.toggle("open");tocBtn.setAttribute("aria-expanded",o?"true":"false");});
+  toc.addEventListener("click",function(ev){if(ev.target.closest("a"))closeToc();});
+  document.addEventListener("click",function(ev){if(!toc.contains(ev.target))closeToc();});
+  document.addEventListener("keydown",function(ev){if(ev.key==="Escape")closeToc();});
+
+  // 今読んでいる章を目次で強調
+  var links=[].slice.call(document.querySelectorAll("nav.toc a"));
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  if("IntersectionObserver" in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){
+      if(e.isIntersecting){links.forEach(function(a){a.classList.remove("on");});var a=map[e.target.id];if(a)a.classList.add("on");}
+    });},{rootMargin:"-20% 0px -70% 0px"});
+    Object.keys(map).forEach(function(id){var el=$(id);if(el)io.observe(el);});
+  }
+
+  // 表の各セルに見出しの名前を付ける(スマホのカード表示で使う)
+  [].forEach.call(document.querySelectorAll(".table-wrap table"),function(t){
+    var head=[].map.call(t.rows[0].cells,function(c){return c.textContent.trim();});
+    [].slice.call(t.rows,1).forEach(function(r){[].forEach.call(r.cells,function(c,i){if(head[i])c.setAttribute("data-label",head[i]);});});
+  });
+
+  // 最新版の表示
+  var raw="https://raw.githubusercontent.com/"+C.repo+"/main/";
+  var ver=$("ver");
+  fetch(raw+"version.json",{cache:"no-store"}).then(function(r){return r.json();}).then(function(j){
+    ver.textContent="最新版: v"+j.version+(j.date?"("+j.date+")":"");
+    var n=$("notes");
+    if(n&&j.notes){n.innerHTML='<p class="note"><b class="lb">最新版の更新内容(v'+esc(j.version)+')</b>'+esc([].concat(j.notes).join("\n")).replace(/\n/g,"<br>")+'</p>';}
+  }).catch(function(){ver.textContent="";});
+
+  // ダウンロード(そのままだと GitHub が画面に文字を表示してしまうので、ファイルとして保存させる)
+  var dl=$("dl"),fallback="https://github.com/"+C.repo+"/raw/main/"+C.file;
+  dl.addEventListener("click",function(ev){
+    ev.preventDefault();
+    fetch(raw+C.file,{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.blob();}).then(function(b){
+      var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=C.file;document.body.appendChild(a);a.click();
+      setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);
+    }).catch(function(){location.href=fallback;});
+  });
+
+  // 更新履歴(changelog.json から。日付ごとにまとめ、新しい日だけ開く)
+  var box=$("cl");
+  if(box&&C.changelog){
+    fetch(C.changelog,{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(data){
+      var list=Array.isArray(data)?data:(data.releases||[]),days=[],idx={};
+      list.forEach(function(r){var d=r.date||"";if(!(d in idx)){idx[d]=days.length;days.push({date:d,rel:[]});}days[idx[d]].rel.push(r);});
+      box.innerHTML=days.map(function(day,i){
+        var v=day.rel.map(function(r){return "v"+r.version;});
+        var vr=v.length>1?v[v.length-1]+"〜"+v[0]:v[0];
+        var items=[];
+        day.rel.forEach(function(r){
+          var tags=(r.tags||[]).map(function(t){return '<span class="tag">'+esc(t)+'</span>';}).join("");
+          [].concat(r.notes||[]).forEach(function(n,j){items.push("<li>"+(j===0?tags:"")+esc(n)+"</li>");});
+        });
+        var head='<span class="d">'+esc(day.date)+'</span><span class="vr">'+esc(vr)+'</span>'+(i===0?'<span class="new">最新</span>':"");
+        return i===0?'<div class="day">'+head+"<ul>"+items.join("")+"</ul></div>"
+                    :'<details class="day"><summary>'+head+"</summary><ul>"+items.join("")+"</ul></details>";
+      }).join("");
+    }).catch(function(){
+      box.innerHTML='<p>読み込めませんでした。<a href="https://github.com/'+C.repo+'/blob/main/'+C.changelogPath+'">GitHub の更新履歴</a>をご覧ください。</p>';
+    });
+  }
+})();
+</script>
+</body>
+</html>
