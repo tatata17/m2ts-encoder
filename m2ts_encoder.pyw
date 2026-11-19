@@ -936,6 +936,7 @@ _DROP_RE = re.compile(r"\bdrop=(\d+)")
 _CRITICAL_PATTERNS = [
     (re.compile(r"conversion failed", re.IGNORECASE), "変換に失敗しました(Conversion failed)"),
     (re.compile(r"error while opening encoder", re.IGNORECASE), "エンコーダーを開けませんでした"),
+    (re.compile(r"error opening input file", re.IGNORECASE), "元のファイルを開けませんでした"),
     (re.compile(r"cannot allocate memory", re.IGNORECASE), "メモリを確保できませんでした"),
     (re.compile(r"not supported by the bitstream filter", re.IGNORECASE), "音声の形式に合わない設定でした(bitstream filter)"),
     (re.compile(r"error initializing bitstream filter", re.IGNORECASE), "音声の変換フィルタを初期化できませんでした"),
@@ -1004,6 +1005,7 @@ _REPEATED_RE = re.compile(r"Last message repeated (\d+) times", re.IGNORECASE)
 # デコード由来のエラー(先頭・末尾・周期的なものを除外して判定する種類)
 _FATAL_ALWAYS_CATEGORIES = {
     "エンコーダーを開けませんでした",
+    "元のファイルを開けませんでした",
     "メモリを確保できませんでした",
 }
 _CONVERSION_FAILED_CATEGORY = "変換に失敗しました(Conversion failed)"
@@ -2388,6 +2390,29 @@ DEFAULT_BAT_SCRIPTS["m2ts→mkv(NHK_音声1本のみ).bat"] = _derive_embedded_b
 )
 
 
+def harden_batch_arg_quoting(text: str) -> str:
+    """
+    バッチの中の %1(対象ファイル)の書き方を、空白や , ; = を含むファイル名でも壊れない形に直す。
+    アプリは、対象ファイルを必ず " " で囲んでバッチに渡す。そのため %1 には " が付いたままになり、
+    バッチの中で "%1" と書くと ""a b.ts"" のように二重になって、空白のところで引数が切れてしまう
+    (空白の無い名前では、たまたま動いていた)。
+      %1          → %~1 (" を外した中身)
+      "%1"        → "%~1"
+      %1.csv など → "%~1.csv" (囲まれていないものは囲む)
+      set "X=%1"  → set "X=%~1" (= の直後は囲まない)
+    """
+    text = re.sub(r"%1(?![0-9])", "%~1", text)
+    return re.sub(r'(?<!["=~])%~1((?:\.[A-Za-z0-9]+)*)(?!")', r'"%~1\1"', text)
+
+
+DEFAULT_BAT_SCRIPTS = {name: harden_batch_arg_quoting(body) for name, body in DEFAULT_BAT_SCRIPTS.items()}
+
+
+def batch_has_fragile_arg_quoting(text: str) -> bool:
+    """バッチに、空白を含むファイル名で壊れる書き方("%1" や、囲んでいない %1.mkv)があるか(自作のバッチの注意に使う)"""
+    return harden_batch_arg_quoting(text) != re.sub(r"%1(?![0-9])", "%~1", text) or '"%1"' in text
+
+
 # 登録データの path にこのプレフィックスが付いている場合、実ファイルではなく
 # 埋め込みバッチ(DEFAULT_BAT_SCRIPTS)を指す。実行時にのみ一時ファイルとして
 # 書き出し、終わったら削除する(永続的なファイル生成を避けるため)。
@@ -2762,7 +2787,7 @@ def build_preset_batch(options: Optional[Dict[str, object]]) -> str:
             ":m2ts_done",
         ]
     lines += ["chcp 932", ""]
-    return "\r\n".join(lines)
+    return harden_batch_arg_quoting("\r\n".join(lines))
 
 
 def describe_encode_options(options: Optional[Dict[str, object]]) -> str:
@@ -3248,7 +3273,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.19.5"
+APP_VERSION = "2026.11.19.6"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -10295,6 +10320,16 @@ class App(tk.Tk):
             actual_bat_path = bat_path
             bat_dir = os.path.dirname(bat_path) or self.folder
             display_bat_name = os.path.basename(bat_path)
+            # 自作のバッチは書きかえない。空白などを含むファイル名で壊れる書き方のときだけ、知らせる
+            if re.search(r"[ ,;=&^]", m2ts_path):
+                try:
+                    with io.open(bat_path, "r", encoding="utf-8", errors="replace") as f:
+                        fragile = batch_has_fragile_arg_quoting(f.read())
+                except OSError:
+                    fragile = False
+                if fragile:
+                    self.encode_queue.put(("log", "[注意] このバッチは %1 の書き方が、空白や , を含むファイル名に対応していません。"
+                                           '失敗するときは、バッチの中の "%1" を "%~1" に、%1.mkv などを "%~1.mkv" に直してください'))
 
         if not bat_path.startswith(PRESET_PREFIX) and self._current_encoder() != "nvenc":
             self.encode_queue.put(("log", "[注意] バッチファイルは、書かれているエンコーダーのまま実行します"
@@ -10600,6 +10635,13 @@ class App(tk.Tk):
                     file_dir, os.path.basename(m2ts_path), program_name, date_digits_hint
                 )
                 output_path = os.path.join(file_dir, output_file_name) if output_file_name else None
+
+            # 出力のファイルがどこにも無く、ffmpegの進み具合(time=)も一度も出ていないのに、ログからは失敗と
+            # 読み取れなかった場合(ffmpegが始まる前に止まった、など)。成功の扱いにすると、設定が外れて「できた」ことになってしまうので、失敗にする
+            if (output_path is None and diag_label != "失敗"
+                    and not any(_TIME_RE.search(line) for line in collected_lines)):
+                diag_label = "失敗"
+                diag_issues = list(diag_issues) + [("出力のファイルが作られませんでした", 1, [])]
 
             # 失敗した変換の出力(中身のない/壊れたmkv・csv)は名前を付け替えずに片付ける。
             # 残しておくと「番組名,日付.mkv」というゴミになり、分割後の成功分と名前も衝突する
