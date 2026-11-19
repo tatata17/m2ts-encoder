@@ -183,6 +183,14 @@ def extract_embedded_tssplitter() -> Tuple[Optional[str], str]:
 
 
 TARGET_EXTENSIONS = (".m2ts", ".rpls")
+# 録画ファイル(番組情報の元になるファイル)の拡張子。対になるcsvの1行目が、録画ファイルの行かどうかを見分けるのに使う。
+# プラグインがスキャンの対象に足した拡張子は、ここに加わる(PluginHost.register_scan_extension)
+SOURCE_NAME_EXTENSIONS = {".m2ts", ".rpls", ".mts", ".ts", ".m2t"}
+
+
+def looks_like_source_name(cell: str) -> bool:
+    """csvのセルが、録画ファイルの名前(xxxxx.m2ts など)に見えるか"""
+    return os.path.splitext(cell.strip())[1].lower() in SOURCE_NAME_EXTENSIONS
 CONVERTED_EXTENSIONS = (".mkv", ".mp4")
 CONFIG_FILENAME = "m2ts_encoder_bats.json"
 
@@ -587,7 +595,7 @@ def read_channel_from_sidecar_csv(csv_path: str, known_channels) -> Optional[str
     if not rows:
         return None
     first = [cell.strip() for cell in rows[0]]
-    looks_like_file = bool(first) and re.search(r"\.(m2ts|rpls|mts)$", first[0], re.IGNORECASE)
+    looks_like_file = bool(first) and looks_like_source_name(first[0])
     if looks_like_file:
         if delimiter == "\t" and len(first) >= 5 and first[4] and not first[4].isdigit():
             return first[4]
@@ -615,7 +623,7 @@ def read_program_info_from_sidecar_csv(csv_path: str) -> Tuple[str, str]:
     except csv.Error:
         return "", ""
     row = [c.strip() for c in row]
-    if not row or not re.search(r"\.(m2ts|rpls|mts)$", row[0], re.IGNORECASE):
+    if not row or not looks_like_source_name(row[0]):
         return "", ""
     program = row[1] if len(row) > 1 else ""
     date_cell = row[2] if delimiter == "\t" else (row[3] if len(row) > 3 else "")
@@ -3239,7 +3247,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.19.3"
+APP_VERSION = "2026.11.19.4"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -6715,6 +6723,7 @@ class PluginHost:
         after = self._scan_extensions[-1]["check"] if self._scan_extensions else app.include_rpls_check
         check.pack(side=tk.LEFT, padx=(10, 0), after=after)
         self._scan_extensions.append({"owner": self._owner, "ext": ext, "var": var, "check": check})
+        SOURCE_NAME_EXTENSIONS.add(ext)
 
     def register_program_info_provider(self, fn) -> None:
         """fn(path) が {"program_name": str, "channel": str, "broadcast_date": str} か None を返す。
@@ -6742,6 +6751,9 @@ class PluginHost:
                 entry["check"].destroy()
             except Exception:
                 pass
+        for entry in self._scan_extensions:
+            if entry["owner"] == owner:
+                SOURCE_NAME_EXTENSIONS.discard(entry["ext"])
         self._scan_extensions = [e for e in self._scan_extensions if e["owner"] != owner]
         self._info_providers = [x for x in self._info_providers if x[0] != owner]
         self._output_name_fallbacks = [x for x in self._output_name_fallbacks if x[0] != owner]
@@ -7695,14 +7707,25 @@ class App(tk.Tk):
         except Exception:
             return False  # 確かめられないときは、削除しない側に倒す
 
+    def _recording_extensions(self) -> Tuple[str, ...]:
+        """録画そのもののファイルの拡張子(.m2ts と、プラグインがスキャンの対象に足したもの)。
+        「変換済みm2tsを削除」とノイズ検査は、この拡張子の行が対象。rpls は番組情報だけのファイルなので入らない"""
+        return (".m2ts",) + self.plugin_host._all_scan_extensions()
+
+    def _is_recording_row(self, data: dict) -> bool:
+        return data["path"].lower().endswith(self._recording_extensions())
+
     def _delete_converted_m2ts(self):
         """
         変換済み(mkv/mp4が存在する)m2tsファイルを削除する。
         - 選択中の行があれば、その中の対象のみ
         - 選択が無ければ、一覧に表示中の対象すべて
-        いずれの場合も、対象は「拡張子が.m2ts」かつ「変換済み」の行のみ。
+        いずれの場合も、対象は「拡張子が.m2ts(またはプラグインが足した拡張子)」かつ「変換済み」の行のみ。
         rplsファイルや未変換のファイルは対象外。mkv/mp4は絶対に削除しない。
         """
+        # プラグインが拡張子を足しているときだけ、案内の文に拡張子を並べる(足していなければ今までと同じ文)
+        extra = self.plugin_host._all_scan_extensions()
+        kind = "m2ts" if not extra else "(" + " / ".join((".m2ts",) + extra) + ")の"
         if self.scanning or self.encoding_running:
             messagebox.showinfo("情報", "スキャンまたはエンコード中は削除できません。")
             return
@@ -7714,7 +7737,7 @@ class App(tk.Tk):
             if data.get("noise_state") in ("pending", "interrupted"):
                 # ノイズ箇所の記録が終わるまでは、元のm2tsを絶対に削除しない
                 return False
-            return data["path"].lower().endswith(".m2ts")
+            return self._is_recording_row(data)
 
         selected_iids = list(self.tree.selection())
         if selected_iids:
@@ -7744,7 +7767,7 @@ class App(tk.Tk):
             )
 
         if not target_iids:
-            messagebox.showinfo("情報", f"{scope_label}変換済みm2tsファイルが見つかりませんでした。")
+            messagebox.showinfo("情報", f"{scope_label}変換済み{kind}ファイルが見つかりませんでした。")
             return
 
         preview_names = [os.path.basename(self.row_data[iid]["path"]) for iid in target_iids[:10]]
@@ -7754,7 +7777,7 @@ class App(tk.Tk):
 
         confirmed = messagebox.askyesno(
             "削除の確認",
-            f"{scope_label}変換済みm2tsファイル {len(target_iids)}件を削除します。\n"
+            f"{scope_label}変換済み{kind}ファイル {len(target_iids)}件を削除します。\n"
             "この操作は元に戻せません(ごみ箱には入らず、完全に削除されます)。\n"
             "対応するmkv/mp4は削除されません。\n\n"
             f"{preview_text}\n\n続行しますか?",
@@ -7778,7 +7801,7 @@ class App(tk.Tk):
             except Exception as e:
                 errors.append(f"{os.path.basename(path)}: {e}")
 
-        self.status_var.set(f"{deleted}件のm2tsファイルを削除しました。")
+        self.status_var.set(f"{deleted}件の{'m2ts' if not extra else '元の'}ファイルを削除しました。")
 
         if errors:
             error_text = "\n".join(errors[:10])
@@ -8563,9 +8586,11 @@ class App(tk.Tk):
         if self.encoding_running or self.scanning:
             messagebox.showinfo("情報", "エンコード中・スキャン中は実行できません。")
             return
-        targets = [iid for iid in iids if iid in self.row_data and self.row_data[iid]["path"].lower().endswith(".m2ts")]
+        targets = [iid for iid in iids if iid in self.row_data and self._is_recording_row(self.row_data[iid])]
         if not targets:
-            messagebox.showinfo("情報", "ノイズ検査は、.m2tsファイルの行でのみ実行できます。")
+            messagebox.showinfo(
+                "情報", "ノイズ検査は、" + " / ".join(self._recording_extensions()) + " ファイルの行でのみ実行できます。"
+            )
             return
         if not self.noise_check_var.get():
             self.noise_check_var.set(True)
