@@ -2369,14 +2369,14 @@ def _derive_embedded_batch(base_key: str, ffmpeg_line: str) -> str:
 _VLC_VF = '-vf "hwdownload,format=nv12,bwdif=1,format=yuv420p" -color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv'
 DEFAULT_BAT_SCRIPTS["m2ts→mkv(CUDAデコード)_ノイズ出ない時用.bat"] = _derive_embedded_batch(
     "m2ts→mkv(ステレオ二か国語) CATV Dch用.bat",
-    'ffmpeg -hwaccel cuda -hwaccel_output_format cuda -scan_all_pmts 1 -probesize 500M -analyzeduration 500M -i "%1" '
+    'ffmpeg -hwaccel cuda -hwaccel_output_format cuda -threads 1 -scan_all_pmts 1 -probesize 500M -analyzeduration 500M -i "%1" '
     '-fflags +discardcorrupt -map 0 -c copy -ss 0 -dn -ignore_unknown -max_interleave_delta 0 -c:v hevc_nvenc '
     + _VLC_VF + ' -qp 32 -c:a copy -bsf:a aac_adtstoasc -metadata:s:a:0 language=jpn -metadata:s:a:1 language=eng '
     '-c:s copy -aspect 16:9 -buffer_size 512k %1.mkv',
 )
 DEFAULT_BAT_SCRIPTS["m2ts→mp4(CUDAデコード)_ノイズ出ない時用.bat"] = _derive_embedded_batch(
     "m2ts→mp4_CATV用.bat",
-    'ffmpeg -hwaccel cuda -hwaccel_output_format cuda -scan_all_pmts 1 -probesize 500M -analyzeduration 500M -i "%1" '
+    'ffmpeg -hwaccel cuda -hwaccel_output_format cuda -threads 1 -scan_all_pmts 1 -probesize 500M -analyzeduration 500M -i "%1" '
     '-fflags +discardcorrupt -map 0:0 -map 0:1 -map 0:2 -ss 0 -dn -ignore_unknown -max_interleave_delta 0 -c:v hevc_nvenc '
     + _VLC_VF + ' -qp 32 -c:a copy -metadata:s:a:0 language=jpn -metadata:s:a:1 language=eng '
     '-aspect 16:9 -buffer_size 512k %1.mp4',
@@ -2610,7 +2610,11 @@ def build_ffmpeg_command(options: Optional[Dict[str, object]], input_expr: str =
     use_cuda = bool(o["cuda"]) and encoder == "nvenc"  # CUDAデコードはNVIDIAのGPUだけ
     parts: List[str] = ["ffmpeg"]
     if use_cuda:
-        parts += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+        # -threads 1 は、デコードのスレッド数(-i より前に書くと、入力=デコードだけに効く)。
+        # GPUでのデコードは、スレッドの数だけ作業用の領域(decode surfaces)を余分に使う。H.264の録画では
+        # 16スレッドだと40面になり、上限の32面を超えて cuvidCreateDecoder が失敗する。GPUが復号するので、
+        # スレッドを減らしても速さは変わらない
+        parts += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-threads", "1"]
     if o["catv"]:
         parts += ["-scan_all_pmts", "1", "-probesize", "500M", "-analyzeduration", "500M"]
     elif o.get("wide_probe"):
@@ -3273,7 +3277,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.19.6"
+APP_VERSION = "2026.11.19.7"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -10090,18 +10094,20 @@ class App(tk.Tk):
                     if new_iids:
                         work[pos:pos] = new_iids
                         continue
-            if failed and self._last_cuda_failure and data.get("split_from") and not data.get("cpu_decode") \
-                    and not self.stop_requested:
-                # 分割で作ったファイルは中身が正常でも、映像の形式によってはCUDAが受け付けないことがあるので、
-                # このファイルに限りCPUデコードでやりなおす(通常のファイルは自動では切り替えない)
+            if failed and self._last_cuda_failure and not data.get("cpu_decode") and not self.stop_requested \
+                    and str(data.get("bat_path") or "").startswith(PRESET_PREFIX):  # CPUに切り替えられるのは「設定」だけ(バッチは中身を変えない)
+                # CUDAが受け付けない映像だった(分割で作ったファイルや、分割しても1本だった・分割の対象でないファイル)。
+                # ここまで来たら分割では直らないので、このファイルに限りCPUデコードでやりなおす
                 data["cpu_decode"] = True
-                self.encode_queue.put(("log", "[やりなおし] 分割したファイルでCUDA(GPU)のデコードに失敗したため、"
+                self.encode_queue.put(("log", "[やりなおし] CUDA(GPU)のデコードに失敗したため、"
                                               "このファイルだけCPUでデコードしてやりなおします"))
                 self.encode_queue.put(("status", iid, "待機中", index, total))
                 work.insert(pos, iid)
                 continue
             if failed and self._last_cuda_failure:
-                self.encode_queue.put(("log", "[注意] CUDA(GPU)でのデコードに失敗しています。"
+                self.encode_queue.put(("log", "[注意] CUDA(GPU)でのデコードに失敗し、CPUでのデコードでも変換できませんでした"
+                                              if data.get("cpu_decode") else
+                                              "[注意] CUDA(GPU)でのデコードに失敗しています。"
                                               "メニュー「設定」の「常にCUDAデコードで変換」をOFFにすると、CPUでデコードします"))
 
             self.encode_queue.put(("status", iid, status, index, total))
@@ -10279,7 +10285,7 @@ class App(tk.Tk):
             if self.row_data.get(iid, {}).get("cpu_decode"):
                 options = dict(options)
                 options["cuda"] = False
-                self.encode_queue.put(("log", "[設定] 分割したファイルのやりなおしのため、CPUでデコードします"))
+                self.encode_queue.put(("log", "[設定] CUDA(GPU)でのデコードに失敗したファイルのやりなおしのため、CPUでデコードします"))
             elif self.settings.get("force_cuda", "0") == "1" and not normalize_encode_options(options)["cuda"]:
                 options = dict(options)
                 options["cuda"] = True
