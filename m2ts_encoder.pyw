@@ -2956,6 +2956,7 @@ MENU_TIPS = {
     "ファイル名の記号を全角に修正": "古い版で ; @ $ { } ~ ` に置き換わっていた記号を、本来の全角の記号に戻します。",
     "変換済みm2tsを削除...": "変換済み(mkv/mp4がある)のm2tsだけを削除します。ごみ箱には入りません。mkv/mp4は削除しません。",
     "作品ごとに仕分け": "仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。実行前に一覧で確認でき、直前の1回は元に戻せます。",
+    "再起動": "アプリを起動しなおします。プラグインを入れかえたあとの読み直しなどに使います。エンコードやスキャンの途中は、再起動できません。",
     "プラグインフォルダを開く": "手元で足す拡張機能(プラグイン)を置くフォルダを開きます。ここに置いた .py は、次に起動したときに読み込まれます。本体を更新しても消えません。中身の分かるものだけを置いてください。",
     "動画ファイルの変換・取り出し": "mp4/mkvなどの動画を、MP4かMKVに作り直します(字幕・音声はコピー、映像はコピーかH.264/H.265)。映像・音声・字幕だけを取り出して保存することもできます。元のファイルは変更しません。",
     "縦横比を直す": "変換済みのmkv/mp4の表示の縦横比(4:3 / 16:9)だけを、再エンコードなしで書き換えます。",
@@ -3247,7 +3248,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.19.4"
+APP_VERSION = "2026.11.19.5"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -7176,6 +7177,7 @@ class App(tk.Tk):
         file_menu.add_command(label="一覧をCSVに保存...", command=self.save_csv)
         csv_index = file_menu.index("end")
         file_menu.add_separator()
+        file_menu.add_command(label="再起動", command=self._restart_from_menu)
         file_menu.add_command(label="終了", command=self._on_close)
         menubar.add_cascade(label="ファイル", menu=file_menu)
         self.csv_button = MenuEntryProxy(file_menu, csv_index)
@@ -9604,14 +9606,27 @@ class App(tk.Tk):
         self.after(300, poll)
         return True
 
-    def _restart_app(self):
+    def _restart_app(self, title: str = "アップデート"):
         script = os.path.abspath(__file__)
         try:
             subprocess.Popen([sys.executable, script], cwd=os.path.dirname(script))
         except Exception as e:
-            messagebox.showerror("アップデート", f"自動で再起動できませんでした。手動で起動し直してください。\n\n{e}", parent=self)
+            messagebox.showerror(title, f"自動で再起動できませんでした。手動で起動し直してください。\n\n{e}", parent=self)
             return
         self.destroy()
+
+    def _restart_from_menu(self):
+        """「ファイル」→「再起動」。アプリを起動しなおす(プラグインを置きかえたあとの読み直しなどに使う)。
+        処理の途中では再起動しない(止めるかどうかは「終了」と同じで、使う人が決める)。"""
+        if self._closing:
+            return
+        if self.encoding_running or self.scanning or self._busy_tool_windows():
+            messagebox.showinfo(
+                "再起動", "エンコードやスキャンなどの処理の途中は、再起動できません。\n終わってから(または中止してから)、もう一度選んでください。",
+                parent=self,
+            )
+            return
+        self._restart_app("再起動")
 
     def _toggle_log_panel(self):
         if self._log_body.winfo_ismapped():
