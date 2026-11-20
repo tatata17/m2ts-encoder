@@ -2833,8 +2833,7 @@ _APP_START_TIME = datetime.datetime.now().timestamp()  # この起動中に作�
 TOOLTIP_DELAY_MS = 1500  # マウスを置いてから説明が出るまでの時間(ミリ秒)
 
 TOOLTIP_TEXTS = {
-    "作品フォルダ名を入力...": "選んだ行を入れる作品フォルダの名前を手で決めます(空欄なら放送局フォルダの直下)。行をダブルクリックでも開きます。",
-    "作品名の長さを指定...": "番組名の先頭から何文字を作品名にするかを数で決めます。話数や[二]は除いた名前から数えます。",
+    "作品フォルダ名を決める...": "選んだ行を入れる作品フォルダの名前を決めます。番組名の言葉を押して選ぶか、名前を直接書きます(空欄なら放送局フォルダの直下)。行をダブルクリックしても開きます。",
     "動かさない": "選んだ行は、今の場所のままにします。",
     "放送局の直下へ": "選んだ行を、作品フォルダではなく放送局フォルダの直下に置きます。",
     "フォルダを変更...": "m2ts / rplsを読み取るフォルダを選びます。選んだフォルダは次回の起動でも使われます。「仕分け」フォルダも、そのフォルダの下になります。",
@@ -3281,7 +3280,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.19.8"
+APP_VERSION = "2026.11.20.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -4187,16 +4186,50 @@ def clean_program_title(program: str) -> str:
     return text.strip(_SERIES_STRIP_CHARS) or (program or "").strip()
 
 
-def suggest_series_name(program: str) -> str:
-    """作品名の提案。話数などを外した名前の、最初の空白までを作品名とみなす(空白が無ければ全体)"""
-    base = clean_program_title(program)
-    parts = re.split(r"[ 　]+", base, maxsplit=1)
-    first = parts[0].strip(_SERIES_STRIP_CHARS)
-    return first if len(first) >= 2 else base
+# 番組名の先頭に付く「ジャンルの言葉」。作品名ではないので、作品フォルダの名前からは外す
+# (「アニメ　うさぎの旅「はじまりの段」」→ 作品名は「うさぎの旅」)。劇場版・新 などは作品名の一部なので入れない
+_SERIES_GENRE_WORDS = frozenset(series for series in (
+    "アニメ", "テレビアニメ", "tvアニメ", "名作アニメ", "ドラマ", "テレビドラマ", "連続ドラマ", "海外ドラマ", "韓国ドラマ",
+    "中国ドラマ", "華流ドラマ", "韓流ドラマ", "時代劇", "映画", "特撮", "連続テレビ小説", "大河ドラマ", "土曜ドラマ",
+    "夜ドラ", "ドキュメンタリー", "バラエティ", "バラエティー",
+))
+_TITLE_WORD_RE = re.compile(r"「[^」]*」|『[^』]*』|[^ 　「『]+")
+
+
+def _is_genre_word(word: str) -> bool:
+    return unicodedata.normalize("NFKC", word or "").casefold().strip() in _SERIES_GENRE_WORDS
 
 
 def _title_words(program: str) -> List[str]:
-    return [w for w in re.split(r"[ 　]+", clean_program_title(program)) if w]
+    """
+    番組名を、作品名を選ぶための「言葉」に区切る。空白で区切るほか、「 」『 』で囲まれた部分は1つの言葉にする
+    (「うさぎの旅「はじまりの段」」→ うさぎの旅 / はじまりの段。空白が無くても、サブタイトルを切り離せる)。
+    """
+    words = []
+    for token in _TITLE_WORD_RE.findall(clean_program_title(program)):
+        if token[:1] in "「『" and len(token) >= 2:
+            token = token[1:-1]
+        token = token.strip(_SERIES_STRIP_CHARS + "「」『』")
+        if token:
+            words.append(token)
+    return words
+
+
+def _skip_genre_words(words: List[str]) -> int:
+    """先頭に並ぶジャンルの言葉の数(全部がジャンルの言葉なら、最後の1つは残す)"""
+    n = 0
+    while n < len(words) - 1 and _is_genre_word(words[n]):
+        n += 1
+    return n
+
+
+def suggest_series_name(program: str) -> str:
+    """作品名の提案。話数などを外した名前の、最初の言葉を作品名とみなす(先頭のジャンルの言葉は飛ばす)"""
+    words = _title_words(program)
+    if not words:
+        return clean_program_title(program)
+    first = words[_skip_genre_words(words)]
+    return first if len(first) >= 2 else clean_program_title(program)
 
 
 def suggest_series_names_bulk(programs_by_key: Dict[str, str], min_ratio: float = 0.5) -> Dict[str, str]:
@@ -4218,8 +4251,10 @@ def suggest_series_names_bulk(programs_by_key: Dict[str, str], min_ratio: float 
         if not w:
             out[k] = programs_by_key[k]
             continue
-        # 先頭が1文字だけの場合(「あ」など)は、次の単語まで含めて最小の候補にする
-        start = 1
+        # 先頭のジャンルの言葉(アニメ など)は作品名に入れない。そのあとが1文字だけの場合(「あ」など)は、
+        # 次の単語まで含めて最小の候補にする
+        skip = _skip_genre_words(w)
+        start = skip + 1
         while start < len(w) and len(w[start - 1]) < 2:
             start += 1
         head = prefix_count[tuple(series_key(x) for x in w[:start])]
@@ -4228,8 +4263,16 @@ def suggest_series_names_bulk(programs_by_key: Dict[str, str], min_ratio: float 
         for n in range(start, len(w) + 1):
             if prefix_count[tuple(series_key(x) for x in w[:n])] >= need:
                 best = n
-        out[k] = " ".join(w[:best]).strip(_SERIES_STRIP_CHARS) or programs_by_key[k]
+        out[k] = " ".join(w[skip:best]).strip(_SERIES_STRIP_CHARS) or programs_by_key[k]
     return out
+
+
+def series_name_with_genre(program: str, name: str) -> str:
+    """作品名の前に、番組名の先頭のジャンルの言葉を付けた名前(付いていなければ name のまま)。
+    前の版が作った「アニメ うさぎの旅」のような作品フォルダを、そのまま使い続けるために使う"""
+    words = _title_words(program)
+    skip = _skip_genre_words(words)
+    return " ".join(words[:skip] + [name]) if skip else name
 
 
 def series_key(name: str) -> str:
@@ -4252,6 +4295,32 @@ def apply_series_rules(program: str, rules: Dict[str, str]) -> Optional[str]:
         if key and base_key.startswith(key) and len(key) > len(best):
             best = key
     return rules[best] if best else None
+
+
+def series_rule_key(program: str, name: str) -> str:
+    """
+    覚える規則のキー(番組名の先頭がこれに一致したら、その作品フォルダへ)。
+    作品名が番組名の先頭にあれば作品名そのもの、途中にあれば「先頭から作品名の終わりまで」をキーにする
+    (「アニメ うさぎの旅「…」」に「うさぎの旅」→ キーは「アニメうさぎの旅」。次の回にも一致する)。
+    番組名のどこにも無い名前を付けたときは、その番組名だけに効く規則になる。
+    """
+    base_key = series_key(clean_program_title(program))
+    key = series_key(name)
+    if not key:
+        return ""
+    pos = base_key.find(key)
+    return base_key[:pos + len(key)] if pos >= 0 else base_key
+
+
+def series_words_selection(words: List[str], name: str) -> List[bool]:
+    """番組名の言葉(words)のうち、今の作品名(name)にあたる続きの部分に印を付ける(見つからなければ全部 False)"""
+    target = series_key(name)
+    if target:
+        for start in range(len(words)):
+            for end in range(start + 1, len(words) + 1):
+                if series_key(" ".join(words[start:end])) == target:
+                    return [start <= i < end for i in range(len(words))]
+    return [False] * len(words)
 
 
 def title_from_video_name(path: str) -> str:
@@ -4304,9 +4373,21 @@ def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dic
     bulk: Dict[str, str] = {}
     for progs in by_channel.values():
         bulk.update(suggest_series_names_bulk(progs))
+    existing: Dict[str, Dict[str, str]] = {}  # 放送局 → {比較用キー: すでにある作品フォルダ名}
+    for it in items:
+        if it["cur_series"]:
+            existing.setdefault(it["channel"], {})[series_key(it["cur_series"])] = it["cur_series"]
     for it in items:
         rule = apply_series_rules(it["program"], rules)
         name = rule if rule else bulk.get(it["path"]) or suggest_series_name(it["program"])
+        if not rule:
+            # 前の版は「アニメ うさぎの旅」のようにジャンルの言葉ごと作品名にしていた。そのフォルダがすでに
+            # あるなら、新しい名前(うさぎの旅)へ動かそうとせず、あるフォルダを使い続ける
+            have = existing.get(it["channel"], {})
+            if series_key(name) not in have:
+                old_style = have.get(series_key(series_name_with_genre(it["program"], name)))
+                if old_style:
+                    name = old_style
         cands[it["path"]] = name
         if rule:
             ruled.add(it["path"])
@@ -6355,6 +6436,72 @@ class LogManagerWindow(tk.Toplevel):
         self.reload()
 
 
+class SeriesNameDialog(tk.Toplevel):
+    """
+    作品フォルダ名を決める小さな画面。番組名を言葉ごとのボタンにして並べ、押した言葉をつないで名前にする
+    (文字数を数えたり、名前を打ちこんだりしなくてよい)。下の欄で、名前を直接書きかえることもできる。
+    結果は self.chosen に入る(キャンセルなら None。空欄で決定なら ""=放送局の直下)。
+    """
+
+    PER_ROW = 4  # 言葉のボタンを横に並べる数
+
+    def __init__(self, parent, program: str, initial: str, count: int):
+        super().__init__(parent)
+        self.title("作品フォルダ名を決める")
+        self.resizable(False, False)
+        self.chosen: Optional[str] = None
+        self.words = _title_words(program)
+        self.word_vars: List[tk.BooleanVar] = []
+        self.name_var = tk.StringVar(value=initial or "")
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text=f"選んだ{count}件を入れる作品フォルダの名前を決めます。").pack(anchor="w")
+        ttk.Label(body, text=f"番組名: {program}", wraplength=560, foreground="#555").pack(anchor="w", pady=(4, 8))
+        if self.words:
+            ttk.Label(body, text="番組名の言葉を押して選べます(押した言葉が、下の名前になります):").pack(anchor="w")
+            chips = ttk.Frame(body)
+            chips.pack(anchor="w", pady=(4, 8))
+            for i, (word, on) in enumerate(zip(self.words, series_words_selection(self.words, initial or ""))):
+                var = tk.BooleanVar(value=on)
+                self.word_vars.append(var)
+                tk.Checkbutton(
+                    chips, text=word, variable=var, indicatoron=False, command=self._words_changed,
+                    padx=8, pady=3, selectcolor="#c6efce",
+                ).grid(row=i // self.PER_ROW, column=i % self.PER_ROW, padx=2, pady=2, sticky="w")
+        ttk.Label(body, text="作品フォルダ名(直接書きかえてもかまいません。空欄にすると、放送局フォルダの直下へ置きます):",
+                  wraplength=560).pack(anchor="w")
+        self.name_entry = ttk.Entry(body, textvariable=self.name_var, width=60)
+        self.name_entry.pack(anchor="w", pady=(4, 10), fill=tk.X)
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X)
+        ttk.Button(buttons, text="キャンセル", command=self._cancel).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="決定", command=self._accept).pack(side=tk.RIGHT, padx=(0, 6))
+
+        self.bind("<Return>", lambda e: self._accept())
+        self.bind("<Escape>", lambda e: self._cancel())
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.transient(parent)
+        self.name_entry.focus_set()
+        self.name_entry.icursor(tk.END)
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def _words_changed(self):
+        picked = [w for w, var in zip(self.words, self.word_vars) if var.get()]
+        self.name_var.set(" ".join(picked))
+
+    def _accept(self):
+        self.chosen = self.name_var.get().strip()
+        self.destroy()
+
+    def _cancel(self):
+        self.chosen = None
+        self.destroy()
+
+
 class SeriesSortWindow(tk.Toplevel):
     """
     「作品ごとに仕分け」: 仕分け済みの放送局フォルダ(仕分け/放送局名/)の中で、作品名のフォルダに振り分ける。
@@ -6414,8 +6561,7 @@ class SeriesSortWindow(tk.Toplevel):
         ops = ttk.Frame(self, padding=(8, 6, 8, 0))
         ops.pack(fill=tk.X)
         ttk.Label(ops, text="選んだ行を:").pack(side=tk.LEFT)
-        ttk.Button(ops, text="作品フォルダ名を入力...", command=self._edit_name).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(ops, text="作品名の長さを指定...", command=self._set_length).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="作品フォルダ名を決める...", command=self._edit_name).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(ops, text="動かさない", command=lambda: self._set_selected(None)).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(ops, text="放送局の直下へ", command=lambda: self._set_selected("")).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(ops, text="自動提案に戻す", command=self._reset_selected).pack(side=tk.LEFT, padx=(6, 0))
@@ -6529,31 +6675,11 @@ class SeriesSortWindow(tk.Toplevel):
             return
         current = self.dest.get(sel[0]["path"])
         initial = current if current else suggest_series_name(sel[0]["program"])
-        name = simpledialog.askstring(
-            "作品フォルダ名", f"選んだ{len(sel)}件を入れる作品フォルダ名を入力してください。\n"
-                              "(空欄にすると、放送局フォルダの直下へ置きます)",
-            initialvalue=initial, parent=self)
-        if name is None:
+        dialog = SeriesNameDialog(self, sel[0]["program"], initial, len(sel))
+        self.wait_window(dialog)
+        if dialog.chosen is None:
             return
-        self._set_selected(series_folder_name(name))
-
-    def _set_length(self):
-        sel = self._need_selection()
-        if not sel:
-            return
-        base = clean_program_title(sel[0]["program"])
-        n = simpledialog.askinteger(
-            "作品名の長さ",
-            f"番組名の先頭から何文字を作品名にしますか?(選んだ{len(sel)}件すべてに使います)\n\n"
-            f"例: 「{base}」\n  →  7 なら「{base[:7]}」(話数や[二]などは除いた名前の先頭から数えます)",
-            initialvalue=min(len(self.dest.get(sel[0]["path"]) or suggest_series_name(sel[0]["program"])), max(1, len(base))),
-            minvalue=1, maxvalue=200, parent=self)
-        if not n:
-            return
-        for it in sel:
-            self.dest[it["path"]] = series_folder_name(clean_program_title(it["program"])[:n])
-            self.manual.add(it["path"])
-        self._render()
+        self._set_selected(series_folder_name(dialog.chosen))
 
     def _reset_selected(self):
         sel = self._need_selection()
@@ -6628,10 +6754,7 @@ class SeriesSortWindow(tk.Toplevel):
             name = self.dest.get(it["path"])
             if not name:
                 continue
-            base_key = series_key(clean_program_title(it["program"]))
-            key = series_key(name)
-            if not base_key.startswith(key):
-                key = base_key
+            key = series_rule_key(it["program"], name)
             if key:
                 rules[key] = name
         settings["series_rules"] = rules
