@@ -3281,7 +3281,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.20.2"
+APP_VERSION = "2026.11.20.3"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -4155,9 +4155,9 @@ def run_tssplitter(exe: str, path: str, on_line=None, should_stop=None) -> Tuple
 # ----------------------------------------------------------------------
 # 作品ごとの仕分け(「仕分け/放送局名/」の中に、作品名のフォルダを作る)
 # ----------------------------------------------------------------------
-_SERIES_TAG = r"(?:\[[^\[\]]{1,4}\]|【[^【】]{1,4}】|＜[^＜＞]{1,4}＞|\([^()]{1,3}\)|（[^（）]{1,3}）)"
+_SERIES_TAG = r"(?:\[[^\[\]]{1,4}\]|［[^［］]{1,4}］|【[^【】]{1,4}】|＜[^＜＞]{1,4}＞|\([^()]{1,3}\)|（[^（）]{1,3}）)"
 _SERIES_TRAIL_TAGS_RE = re.compile(r"(?:\s*" + _SERIES_TAG + r")+\s*$")
-_SERIES_LEAD_TAG_RE = re.compile(r"^\s*(?:\[[^\[\]]+\]|【[^【】]+】)\s*")
+_SERIES_LEAD_TAG_RE = re.compile(r"^\s*(?:\[[^\[\]]+\]|［[^［］]+］|【[^【】]+】)\s*")
 _SERIES_EPISODE_RES = [
     re.compile(r"\s*[#＃♯]\s*[0-9０-９]+.*$"),
     re.compile(r"\s*第\s*[0-9０-９一二三四五六七八九十百]+\s*[話回夜章幕].*$"),
@@ -4194,7 +4194,7 @@ _SERIES_GENRE_WORDS = frozenset(series for series in (
     "中国ドラマ", "華流ドラマ", "韓流ドラマ", "時代劇", "映画", "特撮", "連続テレビ小説", "大河ドラマ", "土曜ドラマ",
     "夜ドラ", "ドキュメンタリー", "バラエティ", "バラエティー",
 ))
-_TITLE_WORD_RE = re.compile(r"「[^」]*」|『[^』]*』|[^ 　「『]+")
+_TITLE_WORD_RE = re.compile(r"「[^」]*」|『[^』]*』|[^ 　「『▼▽]+")  # ▼▽ は「番組名▼今回の内容」の区切り
 
 
 def _is_genre_word(word: str) -> bool:
@@ -4266,14 +4266,6 @@ def suggest_series_names_bulk(programs_by_key: Dict[str, str], min_ratio: float 
                 best = n
         out[k] = " ".join(w[skip:best]).strip(_SERIES_STRIP_CHARS) or programs_by_key[k]
     return out
-
-
-def series_name_with_genre(program: str, name: str) -> str:
-    """作品名の前に、番組名の先頭のジャンルの言葉を付けた名前(付いていなければ name のまま)。
-    前の版が作った「アニメ うさぎの旅」のような作品フォルダを、そのまま使い続けるために使う"""
-    words = _title_words(program)
-    skip = _skip_genre_words(words)
-    return " ".join(words[:skip] + [name]) if skip else name
 
 
 def series_key(name: str) -> str:
@@ -4359,34 +4351,31 @@ def scan_series_items(root: str) -> List[dict]:
     return items
 
 
+def series_loose_key(name: str) -> str:
+    """作品フォルダどうしを見比べるためのキー。series_key に加えて、「 」『 』などの囲みの記号の違いも無視する
+    (前の版が作った「ＴＶシリーズ「うさぎの旅」」と、今の版の「ＴＶシリーズ うさぎの旅」を、同じ作品とみなす)"""
+    return re.sub(r"[「」『』【】“”\"'＂]", "", series_key(name))
+
+
 def prefer_existing_series_folder(item: dict, name: str, have: Dict[str, str]) -> str:
     """
-    自動で決めた作品名(name)より、すでにある作品フォルダを優先する(have: 比較用キー → その放送局にあるフォルダ名)。
-    提案の決め方を変えても、仕分け済みのファイルを別の名前のフォルダへ動かし直さないようにするため。
-      ・name と同じ名前のフォルダがある → そのまま
-      ・そのファイルが今いるフォルダが、name と「片方がもう片方の先頭」の関係 → 今いるフォルダのまま
-        (「うさぎの旅」にいるファイルを「うさぎの旅 ふしぎ島」へ動かさない。逆も同じ)
-      ・ジャンルの言葉つきの古い名前(「アニメ うさぎの旅」)のフォルダがある → それを使う
-      ・name の先頭にあたる名前のフォルダがある(いちばん長いもの) → それを使う(新しい回も、あるフォルダへ)
-      ・name で始まる名前のフォルダが1つだけある → それを使う
+    まだ作品フォルダに入っていないファイルの行き先を、すでにある作品フォルダに合わせる
+    (have: series_loose_key → その放送局にあるフォルダ名)。
+    番組名の先頭からの言葉の並び(「うさぎの旅」「うさぎの旅 ふしぎ島」…)と同じ名前のフォルダがあれば、
+    いちばん長いものを使う。先頭のジャンルの言葉(アニメ など)は、付けた形・外した形の両方で探す。
+    ジャンルの言葉だけのフォルダ(「アニメ」)は選ばない。どれも無ければ、自動で決めた名前(name)のまま。
+    言葉の区切りで比べるので、名前の先頭が似ているだけの別のフォルダには入れない。
     """
-    key = series_key(name)
-    if not key or key in have:
-        return name
-    cur = item.get("cur_series") or ""
-    cur_key = series_key(cur)
-    if len(cur_key) >= 2 and (key.startswith(cur_key) or cur_key.startswith(key)):
-        return cur
-    old_style = have.get(series_key(series_name_with_genre(item["program"], name)))
-    if old_style:
-        return old_style
-    shorter = [k for k in have if len(k) >= 2 and key.startswith(k)]
-    if shorter:
-        return have[max(shorter, key=len)]
-    longer = [k for k in have if len(key) >= 2 and k.startswith(key)]
-    if len(longer) == 1:
-        return have[longer[0]]
-    return name
+    words = _title_words(item["program"])
+    skip = _skip_genre_words(words)
+    for n in range(len(words), 0, -1):
+        for start in ((0, skip) if skip else (0,)):
+            if n <= start or (start == 0 and n <= skip):
+                continue
+            found = have.get(series_loose_key(" ".join(words[start:n])))
+            if found:
+                return found
+    return have.get(series_loose_key(name), name)
 
 
 def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dict[str, Optional[str]]:
@@ -4407,8 +4396,15 @@ def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dic
     existing: Dict[str, Dict[str, str]] = {}  # 放送局 → {比較用キー: すでにある作品フォルダ名}
     for it in items:
         if it["cur_series"]:
-            existing.setdefault(it["channel"], {})[series_key(it["cur_series"])] = it["cur_series"]
+            existing.setdefault(it["channel"], {})[series_loose_key(it["cur_series"])] = it["cur_series"]
     for it in items:
+        if it["cur_series"]:
+            # すでに作品フォルダに入っているファイルは、自動では動かさない(提案の決め方が変わっても、
+            # 仕分け済みのものを別の名前のフォルダへ動かし直さない)。動かしたいときは、手で名前を決める
+            cands[it["path"]] = it["cur_series"]
+            key = (it["channel"], series_key(it["cur_series"]))
+            counts[key] = counts.get(key, 0) + 1   # 同じフォルダへ行く新しい回の「2本以上」の数に入れる
+            continue
         rule = apply_series_rules(it["program"], rules)
         name = rule if rule else bulk.get(it["path"]) or suggest_series_name(it["program"])
         if not rule:
@@ -4421,7 +4417,9 @@ def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dic
     result: Dict[str, Optional[str]] = {}
     for it in items:
         name = cands[it["path"]]
-        if it["path"] in ruled or counts[(it["channel"], series_key(name))] >= 2:
+        if it["cur_series"]:
+            result[it["path"]] = it["cur_series"]
+        elif it["path"] in ruled or counts[(it["channel"], series_key(name))] >= 2:
             result[it["path"]] = series_folder_name(name) or None
         else:
             result[it["path"]] = None
