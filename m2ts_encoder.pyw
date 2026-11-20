@@ -2833,6 +2833,7 @@ _APP_START_TIME = datetime.datetime.now().timestamp()  # この起動中に作�
 TOOLTIP_DELAY_MS = 1500  # マウスを置いてから説明が出るまでの時間(ミリ秒)
 
 TOOLTIP_TEXTS = {
+    "移動する行だけ表示": "チェックすると、これから移動する行(緑の行)だけを一覧に出します。外すと、全部の行を出します。",
     "作品フォルダ名を決める...": "選んだ行を入れる作品フォルダの名前を決めます。番組名の言葉を押して選ぶか、名前を直接書きます(空欄なら放送局フォルダの直下)。行をダブルクリックしても開きます。",
     "動かさない": "選んだ行は、今の場所のままにします。",
     "放送局の直下へ": "選んだ行を、作品フォルダではなく放送局フォルダの直下に置きます。",
@@ -3280,7 +3281,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.20.1"
+APP_VERSION = "2026.11.20.2"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -4358,6 +4359,36 @@ def scan_series_items(root: str) -> List[dict]:
     return items
 
 
+def prefer_existing_series_folder(item: dict, name: str, have: Dict[str, str]) -> str:
+    """
+    自動で決めた作品名(name)より、すでにある作品フォルダを優先する(have: 比較用キー → その放送局にあるフォルダ名)。
+    提案の決め方を変えても、仕分け済みのファイルを別の名前のフォルダへ動かし直さないようにするため。
+      ・name と同じ名前のフォルダがある → そのまま
+      ・そのファイルが今いるフォルダが、name と「片方がもう片方の先頭」の関係 → 今いるフォルダのまま
+        (「うさぎの旅」にいるファイルを「うさぎの旅 ふしぎ島」へ動かさない。逆も同じ)
+      ・ジャンルの言葉つきの古い名前(「アニメ うさぎの旅」)のフォルダがある → それを使う
+      ・name の先頭にあたる名前のフォルダがある(いちばん長いもの) → それを使う(新しい回も、あるフォルダへ)
+      ・name で始まる名前のフォルダが1つだけある → それを使う
+    """
+    key = series_key(name)
+    if not key or key in have:
+        return name
+    cur = item.get("cur_series") or ""
+    cur_key = series_key(cur)
+    if len(cur_key) >= 2 and (key.startswith(cur_key) or cur_key.startswith(key)):
+        return cur
+    old_style = have.get(series_key(series_name_with_genre(item["program"], name)))
+    if old_style:
+        return old_style
+    shorter = [k for k in have if len(k) >= 2 and key.startswith(k)]
+    if shorter:
+        return have[max(shorter, key=len)]
+    longer = [k for k in have if len(key) >= 2 and k.startswith(key)]
+    if len(longer) == 1:
+        return have[longer[0]]
+    return name
+
+
 def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dict[str, Optional[str]]:
     """
     各ファイル(path)の作品フォルダの自動提案。None=動かさない、""=放送局直下、文字列=その作品フォルダへ。
@@ -4381,13 +4412,7 @@ def suggest_series_destinations(items: List[dict], rules: Dict[str, str]) -> Dic
         rule = apply_series_rules(it["program"], rules)
         name = rule if rule else bulk.get(it["path"]) or suggest_series_name(it["program"])
         if not rule:
-            # 前の版は「アニメ うさぎの旅」のようにジャンルの言葉ごと作品名にしていた。そのフォルダがすでに
-            # あるなら、新しい名前(うさぎの旅)へ動かそうとせず、あるフォルダを使い続ける
-            have = existing.get(it["channel"], {})
-            if series_key(name) not in have:
-                old_style = have.get(series_key(series_name_with_genre(it["program"], name)))
-                if old_style:
-                    name = old_style
+            name = prefer_existing_series_folder(it, name, existing.get(it["channel"], {}))
         cands[it["path"]] = name
         if rule:
             ruled.add(it["path"])
@@ -6526,6 +6551,7 @@ class SeriesSortWindow(tk.Toplevel):
         self.rows: Dict[str, str] = {}              # iid -> path
         self.sort_state: Tuple[str, bool] = ("", True)
         self.filter_var = tk.StringVar()
+        self.only_moves_var = tk.BooleanVar(value=self.app.settings.get("series_only_moves", "0") == "1")
         self.remember_var = tk.BooleanVar(value=True)
         self.info_var = tk.StringVar()
         self.rules: Dict[str, str] = dict(self.app.settings.get("series_rules", {}) or {})
@@ -6537,6 +6563,8 @@ class SeriesSortWindow(tk.Toplevel):
         ent = ttk.Entry(top, textvariable=self.filter_var, width=34)
         ent.pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(top, text="クリア", command=lambda: self.filter_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Checkbutton(top, text="移動する行だけ表示", variable=self.only_moves_var,
+                        command=self._only_moves_changed).pack(side=tk.LEFT, padx=(14, 0))
         ttk.Button(top, text="一覧を読み直す", command=self.reload).pack(side=tk.RIGHT)
         self.filter_var.trace_add("write", lambda *_: self._render())
 
@@ -6598,6 +6626,11 @@ class SeriesSortWindow(tk.Toplevel):
         hay = self.app._norm_search(it["program"] + " " + it["file"] + " " + it["channel"] + " " + it["cur_series"])
         return all(t in hay for t in terms)
 
+    def _only_moves_changed(self):
+        self.app.settings["series_only_moves"] = "1" if self.only_moves_var.get() else "0"
+        save_settings(self.app.settings)
+        self._render()
+
     def _dest_text(self, it: dict) -> str:
         d = self.dest.get(it["path"])
         if d is None:
@@ -6619,6 +6652,9 @@ class SeriesSortWindow(tk.Toplevel):
             self.tree.delete(i)
         self.rows = {}
         shown = [it for it in self.items if self._matches(it)]
+        if self.only_moves_var.get():
+            # 移動する行(緑)だけにする。いま選んでいる行は、手で「動かさない」に変えた直後でも見失わないよう残す
+            shown = [it for it in shown if self._is_move(it) or it["path"] in selected_paths]
         col, asc = self.sort_state
         keyfn = {
             "file": lambda it: it["file"], "program": lambda it: it["program"], "channel": lambda it: it["channel"],
@@ -6646,7 +6682,8 @@ class SeriesSortWindow(tk.Toplevel):
             self.tree.heading(c, text=label + ((" ▲" if asc else " ▼") if c == col else ""))
         total_moves = sum(self._is_move(it) for it in self.items)
         self.info_var.set(
-            f"{len(shown)} / {len(self.items)}件を表示  /  移動する予定: {total_moves}件(緑の行)"
+            f"{len(shown)} / {len(self.items)}件を表示{'(移動する行だけ)' if self.only_moves_var.get() else ''}"
+            f"  /  移動する予定: {total_moves}件(緑の行)"
             "  ※ 仕分けフォルダ内の放送局フォルダにあるファイルが対象です")
 
     # ---- 編集 ----
