@@ -263,6 +263,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <p>ffmpeg は「full」版を使います。<code>m2ts_encoder.pyw</code> と<b>同じフォルダに置く</b>か、<b>PATH を通す</b>と、アプリが見つけます。PATH が分からないときは、同じフォルダに置くのがいちばん簡単です。</p>
 <p><b>PATH</b> は、「どのフォルダにいても、名前を打つだけでそのソフトを呼び出せる」ようにする Windows の設定です。</p>
 <div class="note"><b class="lb">かんたんな方法(おすすめ)</b>Windows 10/11 なら、<b>コマンドプロンプト</b>(スタートメニューで「cmd」と検索)に次を貼り付けて Enter。full 版が入り、PATH も自動で設定されます。<p><code>winget install Gyan.FFmpeg</code></p>終わったら、<b>コマンドプロンプトを閉じて開き直し</b>、<code>ffmpeg -version</code> と打って版の情報が出れば完了です。m2ts エンコーダーは一度終了して、起動し直してください。ffprobe も一緒に入ります。</div>
+<div class="note"><b class="lb">アプリから入れる方法</b>m2ts エンコーダーを起動できていれば、メニュー「ツール」→「環境セットアップ...」からも入れられます。足りないものを調べて、「不足しているものを入れる」を押すと、full 版の <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> をダウンロードして、<code>m2ts_encoder.pyw</code> と同じフォルダに置きます(インターネットへの接続が必要です。PATH の設定は要りません)。</div>
 <details class="fold"><summary>手動で入れる方法(上でうまくいかないとき)</summary><ol><li><a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank" rel="noopener">gyan.dev の ffmpeg ビルド</a>から「release builds」の <code>ffmpeg-release-full.7z</code> をダウンロードします(<code>.7z</code> は、7-Zip などで展開します)。</li><li>展開したフォルダを <code>C:\ffmpeg</code> のような分かりやすい場所に置きます(<code>C:\ffmpeg\bin</code> の中に <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> があれば正解)。</li><li><b>PATH を通さない場合</b>は、<code>bin</code> の中の <code>ffmpeg.exe</code> と <code>ffprobe.exe</code> を、<code>m2ts_encoder.pyw</code> と同じフォルダへコピーするだけで終わりです(以降の手順は不要)。</li><li>スタートメニューで「環境変数」と検索 →「システム環境変数の編集」→「環境変数」ボタン。</li><li>上の欄(ユーザー環境変数)の <code>Path</code> を選んで「編集」→「新規」で <code>C:\ffmpeg\bin</code> を追加し、OK を押して閉じます。</li><li>コマンドプロンプトを開き直して、<code>ffmpeg -version</code> と <code>ffprobe -version</code> で確認します。</li></ol><p class="muted">困ったときは「Windows PATH 通す」で検索すると、画像つきの解説がたくさん見つかります。</p></details>
   <h3>起動のしかた</h3>
   <ol class="steps">
@@ -444,7 +445,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <tr><td><code>.pyw</code> をダブルクリックしても開かない</td><td>Pythonを入れ直し、<code>py launcher</code> と <code>.pyw</code> の関連付けにチェックを入れる</td></tr>
     <tr><td>エンコードの途中で止まって見える</td><td>字幕が非常にまばらな録画では、最後の「合体」で元のm2tsを読み進めるため、数分かかることがあります。ディスクの読み込みが動いていれば待ってください。</td></tr>
     <tr><td>診断が「要確認」</td><td>診断の詳細で時刻を確認し、プレーヤー(VLCなど)で元のm2tsと出力の両方を見比べる</td></tr>
-    <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入れかたは、上の「ffmpeg の入れかた」を見てください。</td></tr>
+    <tr><td>ARIB字幕が入らない・字幕のエラーが出る</td><td>ffmpegが「full」版か確認します(essentials版には、字幕の部品が入っていません)。入れかたは、上の「ffmpeg の入れかた」を見てください。メニュー「ツール」→「環境セットアップ...」で、いま使われている ffmpeg が full 版かどうかを確かめられます。</td></tr>
     <tr><td>プレーヤー(VLCなど)では出ないノイズが、エンコードした動画に出る</td><td>メニュー「設定」→「常にCUDAデコードで変換」をONにして、もう一度エンコードします(NVIDIAのGPUが必要)。</td></tr>
     <tr><td>更新の案内が出ない</td><td>メニュー「ヘルプ」→「起動時に更新を確認する」がONか確認します。エンコード中は案内を出さず、ログに表示するだけです。</td></tr>
     <tr><td>ログに「<code>〇〇.mkv を削除できませんでした</code>」と出て、エンコードに失敗する</td><td>そのmkvを開いているソフト(再生ソフトなど)を閉じて、もう一度エンコードします。通常は、前回の失敗や中断で残った <code>番組.m2ts.mkv</code> は、エンコード開始時に自動で削除されます。</td></tr>
@@ -477,7 +478,12 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
 <section id="history">
   <h2><span class="n">10</span>更新履歴</h2>
   <p>新しい順です。同じ日の更新はまとめています。過去の日付は、クリックで開きます。</p>
-  <div class="day"><span class="d">2026-11-20</span><span class="vr">v2026.11.20.1〜v2026.11.20.3</span><span class="new">最新</span>
+  <div class="day"><span class="d">2026-11-23</span><span class="vr">v2026.11.23.1</span><span class="new">最新</span>
+  <ul>
+    <li>ffmpeg と ffprobe を、アプリの中から入れられるようにしました。メニュー「ツール」→「環境セットアップ...」で、必要なもの(Python、rplsinfo、ffmpeg、ffprobe、VLC)がそろっているかを一覧で確かめられ、足りない ffmpeg / ffprobe は、ボタンを押すとダウンロードして、アプリと同じフォルダに置きます(full 版。インターネットへの接続が必要です)。rplsinfo と VLC は、調べるだけで、自動では入れません</li>
+  </ul>
+  </div>
+  <details class="day"><summary><span class="d">2026-11-20</span><span class="vr">v2026.11.20.1〜v2026.11.20.3</span></summary>
   <ul>
     <li>「作品ごとに仕分け」の自動提案を改良しました。番組名の先頭のジャンルの言葉(アニメ、ドラマ、連続テレビ小説 など)を作品名から外し、「 」で囲まれたサブタイトルも切り離します。「アニメ ○○「△△の段」」のような番組が、「アニメ」ではなく「○○」のフォルダにまとまります</li>
     <li>作品フォルダ名を手で決めるとき、番組名の言葉を押して選べるようにしました(行のダブルクリック、または「作品フォルダ名を決める...」)。文字数を数える「作品名の長さを指定...」は、これに置きかえて無くしました</li>
@@ -489,7 +495,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
     <li>まだ仕分けていないファイルは、番組名の先頭の言葉と同じ名前の作品フォルダがすでにあれば、そこへ入れます。名前の先頭が似ているだけの別のフォルダには入れません</li>
     <li>番組名の「▼」「▽」を、作品名と今回の内容の区切りとして扱うようにしました。全角の［二］［新］なども、記号として外します</li>
   </ul>
-  </div>
+  </details>
   <details class="day"><summary><span class="d">2026-11-19</span><span class="vr">v2026.11.19.2〜v2026.11.19.8</span></summary>
   <ul>
     <li>手元で足す拡張機能(プラグイン)を置けるようにしました。「ツール」メニューの「プラグインフォルダを開く」で開くフォルダに .py を置くと、次に起動したときに読み込まれます。本体を更新しても消えません</li>

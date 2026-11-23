@@ -24,7 +24,7 @@ Python(tkinter)で動く **`m2ts_encoder.pyw` 1つだけ** で動作します(�
 
 TsSplitter.exe は用意不要です(アプリに埋め込んであります)。
 
-**ffmpeg の入れかた:** Windows 10/11 なら、コマンドプロンプトで `winget install Gyan.FFmpeg` を実行すると、full版が入り、PATHも自動で設定されます。入れたあとは `ffmpeg -version` で確認して、m2ts-encoder を起動し直してください。手動で入れる方法や、PATHが分からないときの手順は、[使い方のページ](https://tatata17.github.io/m2ts-encoder/)の「ffmpeg の入れかた」を見てください(同じフォルダに置くだけでも動きます)。
+**ffmpeg の入れかた:** Windows 10/11 なら、コマンドプロンプトで `winget install Gyan.FFmpeg` を実行すると、full版が入り、PATHも自動で設定されます。入れたあとは `ffmpeg -version` で確認して、m2ts-encoder を起動し直してください。アプリを起動できていれば、メニュー「ツール」→「環境セットアップ...」からも入れられます(full版の `ffmpeg.exe` と `ffprobe.exe` を、同じフォルダに置きます)。手動で入れる方法や、PATHが分からないときの手順は、[使い方のページ](https://tatata17.github.io/m2ts-encoder/)の「ffmpeg の入れかた」を見てください(同じフォルダに置くだけでも動きます)。
 
 ## 起動のしかた
 

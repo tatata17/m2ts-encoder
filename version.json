@@ -1,6 +1,6 @@
 {
-  "version": "2026.11.20.3",
+  "version": "2026.11.23.1",
   "file": "m2ts_encoder.pyw",
-  "sha256": "40d23d114d36ac3d6325ad7b48dca9ee7284ff6126acd062d90cfe553f687091",
-  "notes": "「作品ごとに仕分け」: 仕分け済みのファイルを動かし直そうとするのを修正しました"
+  "sha256": "e3eb1dc90e1638e3bbac46637fe8ea04c468c88ed4dae52d5ef69c49679bf86b",
+  "notes": "ffmpeg と ffprobe を、アプリの中から入れられるようにしました(ツール → 環境セットアップ...)"
 }

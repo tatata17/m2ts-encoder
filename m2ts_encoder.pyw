@@ -2990,6 +2990,7 @@ MENU_TIPS = {
     "変換済みm2tsを削除...": "変換済み(mkv/mp4がある)のm2tsだけを削除します。ごみ箱には入りません。mkv/mp4は削除しません。",
     "作品ごとに仕分け": "仕分け済みの放送局フォルダの中を、作品名のフォルダに分けます。実行前に一覧で確認でき、直前の1回は元に戻せます。",
     "再起動": "アプリを起動しなおします。プラグインを入れかえたあとの読み直しなどに使います。エンコードやスキャンの途中は、再起動できません。",
+    "環境セットアップ": "このアプリが使う外部のツール(Python、rplsinfo、ffmpeg、ffprobe、VLC)がそろっているかを調べます。ffmpeg と ffprobe は、ここからダウンロードして、アプリと同じフォルダに置けます(インターネットへの接続が必要です)。",
     "プラグインフォルダを開く": "手元で足す拡張機能(プラグイン)を置くフォルダを開きます。ここに置いた .py は、次に起動したときに読み込まれます。本体を更新しても消えません。中身の分かるものだけを置いてください。",
     "動画ファイルの変換・取り出し": "mp4/mkvなどの動画を、MP4かMKVに作り直します(字幕・音声はコピー、映像はコピーかH.264/H.265)。映像・音声・字幕だけを取り出して保存することもできます。元のファイルは変更しません。",
     "縦横比を直す": "変換済みのmkv/mp4の表示の縦横比(4:3 / 16:9)だけを、再エンコードなしで書き換えます。",
@@ -3281,7 +3282,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.20.3"
+APP_VERSION = "2026.11.23.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -5399,6 +5400,590 @@ class MediaToolWindow(tk.Toplevel):
         self.destroy()
 
 
+# ----------------------------------------------------------------------
+# 環境セットアップ(必要な外部ツールがそろっているかを調べ、ffmpeg / ffprobe を入れる)
+#   調べ方は、本体がふだん使う find_* と同じ(=ここで「導入済み」なら、本体も見つけられる)。
+#   自動で入れるのは ffmpeg.exe と ffprobe.exe だけ。使う人がボタンを押したときにだけ、ダウンロードする。
+#   取得元: ffmpeg.org が Windows 用として案内している gyan.dev のビルド(full 版)。
+#     ・gyan.dev のページ自体は、full 版を 7z でしか置いていない(標準ライブラリでは開けない)。
+#     ・同じ作者の GitHub(GyanD/codexffmpeg。gyan.dev の「mirror @ github」の行き先)に、同じ full 版の zip がある。
+#       winget の Gyan.FFmpeg も、この zip を使っている。
+#   ARIB字幕の部品(libaribb24 / libaribcaption)は full 版にしか入っていないので、essentials 版は使わない。
+# ----------------------------------------------------------------------
+FFMPEG_BUILDS_PAGE = "https://www.gyan.dev/ffmpeg/builds/"
+FFMPEG_VERSION_URLS = (
+    "https://www.gyan.dev/ffmpeg/builds/release-version",
+    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z.ver",
+)
+FFMPEG_LATEST_PAGE = "https://github.com/GyanD/codexffmpeg/releases/latest"
+FFMPEG_ZIP_URL = "https://github.com/GyanD/codexffmpeg/releases/download/{ver}/ffmpeg-{ver}-full_build.zip"
+FFMPEG_RELEASE_API = "https://api.github.com/repos/GyanD/codexffmpeg/releases/tags/{ver}"
+FFMPEG_TOOL_NAMES = ("ffmpeg.exe", "ffprobe.exe")
+_FFMPEG_VERSION_RE = re.compile(r"\d+(?:\.\d+){0,3}")
+RPLSINFO_PAGE = "https://github.com/tsukumijima/rplsinfo/releases"
+
+
+class SetupError(Exception):
+    """環境セットアップの途中で止めるときの例外(メッセージは、そのまま使う人に見せる)"""
+
+
+def tool_version_output(exe_path: str, timeout: float = 20.0) -> str:
+    """ツールを -version で動かしたときの出力(動かせなければ空文字)"""
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        proc = subprocess.run([exe_path, "-version"], capture_output=True, timeout=timeout, creationflags=flags)
+    except Exception:  # noqa: BLE001
+        return ""
+    return (proc.stdout or b"").decode("utf-8", errors="replace")
+
+
+def ffmpeg_has_arib_parts(version_output: str) -> Optional[bool]:
+    """ffmpeg -version の出力から、ARIB字幕の部品が入っているか(full 版か)を見る。出力が読めなければ None"""
+    if "configuration:" not in version_output:
+        return None
+    return ("--enable-libaribb24" in version_output) or ("--enable-libaribcaption" in version_output)
+
+
+def check_environment(tk_version: str = "") -> List[dict]:
+    """
+    必要なものがそろっているかを調べる。1項目=1つの dict:
+      key / name / state("ok"=導入済み, "warn"=あるが注意, "missing"=未導入, "optional"=任意で無い)
+      status(一覧に出す短い文) / where(見つかった場所) / detail(版数や案内) / auto(自動で入れられるか)
+    """
+    rows: List[dict] = []
+    rows.append({
+        "key": "python", "name": "Python(pythonw)と Tkinter", "state": "ok", "status": "導入済み",
+        "where": sys.executable or "",
+        "detail": f"Python {sys.version.split()[0]}" + (f" / Tk {tk_version}" if tk_version else ""), "auto": False,
+    })
+
+    path = find_rplsinfo()
+    rows.append({
+        "key": "rplsinfo", "name": "rplsinfo.exe(番組情報の取得)",
+        "state": "ok" if path else "missing", "status": "導入済み" if path else "未導入(手で置いてください)",
+        "where": path or "",
+        "detail": "" if path else "配布元から入手して、m2ts_encoder.pyw と同じフォルダに置いてください(自動では入れません)",
+        "auto": False,
+    })
+
+    script_dir = get_script_dir()
+    ffmpeg = find_ffmpeg()
+    if ffmpeg:
+        out = tool_version_output(ffmpeg)
+        arib = ffmpeg_has_arib_parts(out)
+        line = out.splitlines()[0].strip() if out.strip() else "(版数を調べられませんでした)"
+        in_app_dir = os.path.normcase(os.path.dirname(os.path.abspath(ffmpeg))) == os.path.normcase(script_dir)
+        if arib is False:
+            rows.append({
+                "key": "ffmpeg", "name": "ffmpeg.exe(エンコード)", "state": "warn",
+                "status": "導入済み(full 版ではありません)", "where": ffmpeg,
+                "detail": line + " / ARIB字幕の部品が入っていません。"
+                + ("full 版に入れかえるには、このファイルを消してから、もう一度調べてください" if in_app_dir
+                   else "「不足しているものを入れる」で、full 版をアプリのフォルダに置けます(そちらが優先されます)"),
+                "auto": not in_app_dir,
+            })
+        else:
+            rows.append({"key": "ffmpeg", "name": "ffmpeg.exe(エンコード)", "state": "ok", "status": "導入済み",
+                         "where": ffmpeg, "detail": line, "auto": False})
+    else:
+        rows.append({"key": "ffmpeg", "name": "ffmpeg.exe(エンコード)", "state": "missing",
+                     "status": "未導入(自動で入れられます)", "where": "",
+                     "detail": "「不足しているものを入れる」で、アプリのフォルダに置きます", "auto": True})
+
+    ffprobe = find_ffprobe()
+    if ffprobe:
+        out = tool_version_output(ffprobe)
+        line = out.splitlines()[0].strip() if out.strip() else "(版数を調べられませんでした)"
+        rows.append({"key": "ffprobe", "name": "ffprobe.exe(中身の調査)", "state": "ok", "status": "導入済み",
+                     "where": ffprobe, "detail": line, "auto": False})
+    else:
+        rows.append({"key": "ffprobe", "name": "ffprobe.exe(中身の調査)", "state": "missing",
+                     "status": "未導入(自動で入れられます)", "where": "",
+                     "detail": "「不足しているものを入れる」で、アプリのフォルダに置きます", "auto": True})
+
+    vlc = find_vlc()
+    rows.append({
+        "key": "vlc", "name": "VLC(再生。無くても使えます)", "state": "ok" if vlc else "optional",
+        "status": "導入済み" if vlc else "見つかりません(任意)", "where": vlc or "",
+        "detail": "" if vlc else "再生に使う任意のソフトです。必要なら、ご自身で入れてください(自動では入れません)",
+        "auto": False,
+    })
+    return rows
+
+
+def ffmpeg_tools_to_install(rows: List[dict]) -> List[str]:
+    """調べた結果から、アプリのフォルダに置くファイル名(ffmpeg.exe / ffprobe.exe)を決める"""
+    by_key = {r["key"]: r for r in rows}
+    names = []
+    for key, name in (("ffmpeg", "ffmpeg.exe"), ("ffprobe", "ffprobe.exe")):
+        if by_key.get(key, {}).get("auto") and not os.path.isfile(os.path.join(get_script_dir(), name)):
+            names.append(name)
+    # ffmpeg を full 版に置きかえるときは、ffprobe も同じ版でそろえる(アプリのフォルダに無い場合だけ)
+    if "ffmpeg.exe" in names and "ffprobe.exe" not in names \
+            and not os.path.isfile(os.path.join(get_script_dir(), "ffprobe.exe")):
+        names.append("ffprobe.exe")
+    return names
+
+
+def resolve_ffmpeg_release(http_get=None, log=lambda s: None) -> str:
+    """いま公開されている ffmpeg のリリース版の番号(例: 7.1)を調べる。調べられなければ SetupError"""
+    http_get = http_get or _http_get
+    for url in FFMPEG_VERSION_URLS:
+        log(f"版数を調べています: {url}")
+        try:
+            text = http_get(url, timeout=20.0).decode("ascii", errors="replace").strip()
+        except Exception as e:  # noqa: BLE001
+            log(f"  取得できませんでした: {type(e).__name__}: {e}")
+            continue
+        if _FFMPEG_VERSION_RE.fullmatch(text):
+            log(f"  リリース版: {text}")
+            return text
+        log(f"  版数として読めませんでした: {text[:40]!r}")
+    # 予備: GitHub の「最新のリリース」の行き先(…/releases/tag/7.1)から読む
+    log(f"版数を調べています: {FFMPEG_LATEST_PAGE}")
+    try:
+        req = urllib.request.Request(FFMPEG_LATEST_PAGE, headers={"User-Agent": "m2ts-encoder-setup"})
+        with urllib.request.urlopen(req, timeout=20.0) as resp:
+            tag = resp.geturl().rstrip("/").rsplit("/", 1)[-1]
+        if _FFMPEG_VERSION_RE.fullmatch(tag):
+            log(f"  リリース版: {tag}")
+            return tag
+        log(f"  版数として読めませんでした: {tag[:40]!r}")
+    except Exception as e:  # noqa: BLE001
+        log(f"  取得できませんでした: {type(e).__name__}: {e}")
+    raise SetupError("ffmpeg の最新の版数を調べられませんでした。インターネットにつながっているか確かめて、もう一度試してください")
+
+
+def fetch_ffmpeg_zip_sha256(version: str, http_get=None, log=lambda s: None) -> Optional[str]:
+    """配布元(GitHub)が記録している zip の SHA-256(分からなければ None。照合は省くが、展開後に動作を確かめる)"""
+    http_get = http_get or _http_get
+    url = FFMPEG_RELEASE_API.format(ver=version)
+    log(f"配布元の記録(SHA-256)を調べています: {url}")
+    try:
+        data = json.loads(http_get(url, timeout=20.0).decode("utf-8"))
+        want = f"ffmpeg-{version}-full_build.zip"
+        for asset in data.get("assets", []):
+            if asset.get("name") == want:
+                digest = str(asset.get("digest") or "")
+                if digest.lower().startswith("sha256:") and re.fullmatch(r"[0-9a-f]{64}", digest[7:].lower()):
+                    return digest[7:].lower()
+        log("  記録が見つかりませんでした(照合は省いて、展開したあとの動作確認だけ行います)")
+    except Exception as e:  # noqa: BLE001
+        log(f"  調べられませんでした: {type(e).__name__}: {e}(照合は省いて、展開したあとの動作確認だけ行います)")
+    return None
+
+
+def download_to_file(url: str, dest: str, progress=lambda done, total: None, should_stop=lambda: False,
+                     timeout: float = 60.0) -> str:
+    """url を dest に保存し、中身の SHA-256 を返す。途中で止められたら SetupError"""
+    req = urllib.request.Request(url, headers={"User-Agent": "m2ts-encoder-setup"})
+    sha = hashlib.sha256()
+    done = 0
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        with open(dest, "wb") as f:
+            while True:
+                if should_stop():
+                    raise SetupError("中止しました")
+                chunk = resp.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+                sha.update(chunk)
+                done += len(chunk)
+                progress(done, total)
+    if total and done != total:
+        raise SetupError(f"ダウンロードが途中で切れました({done} / {total} バイト)。もう一度試してください")
+    return sha.hexdigest()
+
+
+def extract_tools_from_zip(zip_path: str, dest_dir: str, names: List[str], log=lambda s: None) -> List[str]:
+    """zip の中の bin\\ffmpeg.exe などを、dest_dir に取り出す(すでにある同名のファイルは上書きしない)。置いたパスを返す"""
+    import zipfile
+    placed = []
+    with zipfile.ZipFile(zip_path) as zf:
+        members = {}
+        for info in zf.infolist():
+            base = info.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if base in names and "/bin/" in "/" + info.filename.replace("\\", "/").lower() and not info.is_dir():
+                members.setdefault(base, info)
+        missing = [n for n in names if n not in members]
+        if missing:
+            raise SetupError("ダウンロードしたファイルの中に、" + " / ".join(missing) + " が見つかりませんでした")
+        for name in names:
+            target = os.path.join(dest_dir, name)
+            if os.path.exists(target):
+                log(f"すでにあるので、置きかえません: {target}")
+                continue
+            tmp = target + ".part"
+            log(f"取り出しています: {members[name].filename} → {target}")
+            try:
+                with zf.open(members[name]) as src, open(tmp, "wb") as dst:
+                    shutil.copyfileobj(src, dst, 1024 * 1024)   # 中身のCRCは、読み終わりに zipfile が確かめる
+                os.replace(tmp, target)
+            except Exception:
+                try:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            placed.append(target)
+    return placed
+
+
+def install_ffmpeg_tools(names: List[str], dest_dir: str, log=lambda s: None, progress=lambda done, total: None,
+                         should_stop=lambda: False, http_get=None) -> List[str]:
+    """
+    ffmpeg.exe / ffprobe.exe(names)を、gyan.dev の full 版から取り出して dest_dir に置く。置いたパスを返す。
+    うまくいかなければ SetupError(理由つき)。ダウンロードした zip は、成功しても失敗しても消す。
+    """
+    if not names:
+        return []
+    os.makedirs(dest_dir, exist_ok=True)
+    probe = os.path.join(dest_dir, ".m2ts_encoder_write_test")
+    try:
+        with open(probe, "wb") as f:
+            f.write(b"x")
+        os.remove(probe)
+    except OSError as e:
+        raise SetupError(f"アプリのフォルダに書きこめません: {dest_dir}\n{e}")
+
+    version = resolve_ffmpeg_release(http_get, log)
+    expected = fetch_ffmpeg_zip_sha256(version, http_get, log)
+    url = FFMPEG_ZIP_URL.format(ver=version)
+    work_dir = os.path.join(get_app_data_dir(), "downloads")
+    os.makedirs(work_dir, exist_ok=True)
+    zip_path = os.path.join(work_dir, f"ffmpeg-{version}-full_build.zip")
+    for folder, label in ((work_dir, "ダウンロードの置き場"), (dest_dir, "アプリのフォルダ")):
+        try:
+            free = shutil.disk_usage(folder).free
+        except OSError:
+            continue
+        if free < 700 * 1024 * 1024:
+            raise SetupError(f"{label}の空きが足りません(空き {free // (1024 * 1024)} MB。700 MB 以上あけてください): {folder}")
+    try:
+        log(f"ダウンロードしています: {url}")
+        try:
+            got = download_to_file(url, zip_path, progress, should_stop)
+        except SetupError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise SetupError(f"ダウンロードできませんでした: {type(e).__name__}: {e}\n取得元: {url}")
+        log(f"ダウンロードが終わりました({os.path.getsize(zip_path) // (1024 * 1024)} MB / SHA-256 {got})")
+        if expected:
+            if got != expected:
+                raise SetupError("ダウンロードしたファイルが、配布元の記録(SHA-256)と一致しません。もう一度試してください\n"
+                                 f"記録: {expected}\n実際: {got}")
+            log("配布元の記録(SHA-256)と一致しました")
+        try:
+            placed = extract_tools_from_zip(zip_path, dest_dir, names, log)
+        except SetupError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise SetupError(f"ダウンロードしたファイルを開けませんでした(壊れている可能性があります): {type(e).__name__}: {e}")
+    finally:
+        try:
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+        except OSError:
+            pass
+    for path in placed:   # 置いたものが、実際に動くかを確かめる
+        log(f"動作を確かめています: \"{path}\" -version")
+        out = tool_version_output(path)
+        if not out.strip():
+            for bad in placed:   # 動かないものは残さない(残すと、次に調べたときに「導入済み」に見えてしまう)
+                try:
+                    os.remove(bad)
+                except OSError:
+                    pass
+            raise SetupError(f"置いたファイルを動かせなかったので、取り消しました: {path}")
+        log("  " + out.splitlines()[0].strip())
+    return placed
+
+
+class EnvSetupWindow(tk.Toplevel):
+    """「ツール」→「環境セットアップ...」。必要な外部ツールの一覧と、ffmpeg / ffprobe の導入"""
+
+    STATE_TAGS = {"ok": "ok", "warn": "warn", "missing": "ng", "optional": "opt"}
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        self.title("環境セットアップ")
+        self.geometry("1040x620")
+        self.minsize(820, 480)
+        self._queue: "queue.Queue" = queue.Queue()
+        self._worker: Optional[threading.Thread] = None
+        self._stop = False
+        self._closed = False
+        self.rows: List[dict] = []
+        self.status_var = tk.StringVar(value="")
+
+        top = ttk.Frame(self, padding=(10, 10, 10, 4))
+        top.pack(fill=tk.X)
+        ttk.Label(
+            top, wraplength=1000, justify="left",
+            text="このアプリが使う外部のツールが、そろっているかを調べます。ffmpeg と ffprobe は、ここから入れられます"
+                 "(インターネットへの接続が必要です。ボタンを押したときにだけ、ダウンロードします)。",
+        ).pack(anchor="w")
+
+        mid = ttk.Frame(self, padding=(10, 4))
+        mid.pack(fill=tk.X)
+        cols = ("name", "status", "detail", "where")
+        self.tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="browse", height=6)
+        for c, label, w in (("name", "必要なもの", 210), ("status", "状態", 210), ("detail", "版数・案内", 330),
+                            ("where", "見つかった場所", 260)):
+            self.tree.heading(c, text=label)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill=tk.X)
+        self.tree.tag_configure("ok", background="#c6efce", foreground="#006100")
+        self.tree.tag_configure("warn", background="#ffeb9c", foreground="#7f6000")
+        self.tree.tag_configure("ng", background="#ffc7ce", foreground="#9c0006")
+        self.tree.tag_configure("opt", foreground="#666666")
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self._show_selected())
+        self.detail_var = tk.StringVar(value="行を選ぶと、ここに全文が出ます。")
+        ttk.Label(mid, textvariable=self.detail_var, wraplength=1000, justify="left", foreground="#444").pack(
+            anchor="w", pady=(4, 0))
+
+        ops = ttk.Frame(self, padding=(10, 6))
+        ops.pack(fill=tk.X)
+        self.recheck_button = ttk.Button(ops, text="もう一度調べる", command=self.recheck)
+        self.recheck_button.pack(side=tk.LEFT)
+        self.install_button = ttk.Button(ops, text="不足しているものを入れる(ffmpeg / ffprobe)", command=self._install)
+        self.install_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.cancel_button = ttk.Button(ops, text="中止", command=self._request_stop)
+        self.cancel_button.pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="アプリのフォルダを開く", command=self._open_app_folder).pack(side=tk.LEFT, padx=(18, 0))
+        ttk.Button(ops, text="rplsinfo の配布ページ", command=lambda: self._open_url(RPLSINFO_PAGE)).pack(
+            side=tk.LEFT, padx=(6, 0))
+        ttk.Button(ops, text="閉じる", command=self._close).pack(side=tk.RIGHT)
+
+        prog = ttk.Frame(self, padding=(10, 0))
+        prog.pack(fill=tk.X)
+        self.progress = ttk.Progressbar(prog, mode="determinate", maximum=100)
+        self.progress.pack(fill=tk.X)
+        ttk.Label(prog, textvariable=self.status_var).pack(anchor="w", pady=(2, 0))
+
+        logf = ttk.Frame(self, padding=(10, 6, 10, 10))
+        logf.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(logf, text=f"ログ(同じ内容を {self._log_path()} にも残します):", wraplength=1000,
+                  justify="left").pack(anchor="w")
+        self.log_text = scrolledtext.ScrolledText(logf, height=10, wrap="word", state="disabled")
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self._set_busy(False)
+        self.after(100, self._poll)
+        self.recheck()
+
+    # ---- 部品
+    @staticmethod
+    def _log_path() -> str:
+        return os.path.join(get_app_data_dir(), "setup_log.txt")
+
+    def _log(self, line: str):
+        """ログ欄とログファイルに1行(どのスレッドから呼んでもよい)"""
+        self._queue.put(("log", str(line)))
+
+    def _write_log(self, line: str):
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            self.log_text.configure(state="normal")
+            self.log_text.insert(tk.END, line + "\n")
+            self.log_text.see(tk.END)
+            self.log_text.configure(state="disabled")
+        except tk.TclError:
+            pass
+        try:
+            with io.open(self._log_path(), "a", encoding="utf-8") as f:
+                f.write(f"{stamp} {line}\n")
+        except OSError:
+            pass
+
+    def _set_busy(self, busy: bool):
+        can_install = bool(ffmpeg_tools_to_install(self.rows)) if self.rows else False
+        self.recheck_button.state(["disabled" if busy else "!disabled"])
+        self.install_button.state(["disabled" if (busy or not can_install) else "!disabled"])
+        self.cancel_button.state(["!disabled" if busy else "disabled"])
+
+    def _busy(self) -> bool:
+        return self._worker is not None and self._worker.is_alive()
+
+    def _show_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        row = next((r for r in self.rows if r["key"] == sel[0]), None)
+        if row:
+            parts = [row["name"], row["status"]] + [x for x in (row["detail"], row["where"]) if x]
+            self.detail_var.set(" / ".join(parts))
+
+    def _open_app_folder(self):
+        try:
+            open_folder_in_explorer(get_script_dir())
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("エラー", f"フォルダを開けませんでした。\n{e}", parent=self)
+
+    def _open_url(self, url: str):
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("エラー", f"ページを開けませんでした。\n{url}\n{e}", parent=self)
+
+    # ---- 調べる
+    def recheck(self):
+        if self._busy():
+            return
+        try:
+            tk_version = str(self.tk.call("info", "patchlevel"))
+        except tk.TclError:
+            tk_version = str(tk.TkVersion)
+        self.status_var.set("調べています...")
+        self._stop = False
+        self._worker = threading.Thread(target=self._check_worker, args=(tk_version,), daemon=True)
+        self._worker.start()
+        self._set_busy(True)
+
+    def _check_worker(self, tk_version: str):
+        try:
+            self._queue.put(("rows", check_environment(tk_version)))
+        except Exception as e:  # noqa: BLE001
+            self._log(f"[調査] 失敗しました: {type(e).__name__}: {e}")
+            self._queue.put(("finish", "調べられませんでした"))
+
+    def _show_rows(self, rows: List[dict]):
+        self.rows = rows
+        self.tree.delete(*self.tree.get_children())
+        for r in rows:
+            self.tree.insert("", tk.END, iid=r["key"], tags=(self.STATE_TAGS.get(r["state"], ""),),
+                             values=(r["name"], r["status"], r["detail"], r["where"]))
+            self._write_log(f"[調査] {r['name']}: {r['status']}" + (f" / {r['detail']}" if r["detail"] else "")
+                            + (f" / {r['where']}" if r["where"] else ""))
+        names = ffmpeg_tools_to_install(rows)
+        need_hand = [r["name"] for r in rows if r["state"] == "missing" and not r["auto"]]
+        if names:
+            text = "ここから入れられるもの: " + " / ".join(names)
+        elif need_hand:
+            text = "自動で入れられるものは、そろっています"
+        else:
+            text = "必要なものは、そろっています"
+        if need_hand:
+            text += "  /  手で置く必要があるもの: " + " / ".join(need_hand)
+        self.status_var.set(text)
+
+    # ---- 入れる
+    def _install(self):
+        if self._busy():
+            return
+        names = ffmpeg_tools_to_install(self.rows)
+        if not names:
+            messagebox.showinfo("環境セットアップ", "ここから入れられるものは、もうありません。", parent=self)
+            return
+        dest = get_script_dir()
+        if not messagebox.askyesno(
+                "環境セットアップ",
+                " / ".join(names) + " を、インターネットからダウンロードして、アプリと同じフォルダに置きます。\n\n"
+                "・インターネットへの接続が必要です\n"
+                "・取得元: gyan.dev の Windows 用ビルド(full 版)。ffmpeg.org が案内している配布元です\n"
+                "・ダウンロードは 200 MB 前後、置くファイルは合わせて数百 MB です(版によって変わります)\n"
+                f"・置き場所: {dest}\n"
+                "・すでにあるファイルは、置きかえません\n\n"
+                "続けますか?", parent=self):
+            return
+        self._stop = False
+        self.progress.configure(value=0)
+        self.status_var.set("準備しています...")
+        self._log(f"[導入] 開始: {' / '.join(names)} → {dest}")
+        self._worker = threading.Thread(target=self._install_worker, args=(names, dest), daemon=True)
+        self._worker.start()
+        self._set_busy(True)
+
+    def _install_worker(self, names: List[str], dest: str):
+        last = [0.0]
+
+        def progress(done: int, total: int):
+            now = time.time()
+            if now - last[0] >= 0.2 or (total and done >= total):
+                last[0] = now
+                self._queue.put(("progress", done, total))
+        try:
+            placed = install_ffmpeg_tools(names, dest, log=lambda s: self._log("[導入] " + s), progress=progress,
+                                          should_stop=lambda: self._stop)
+            self._log("[導入] 完了: " + (" / ".join(placed) if placed else "置いたファイルはありません"))
+            self._queue.put(("installed", bool(placed)))
+        except SetupError as e:
+            self._log("[導入] 失敗: " + str(e).replace("\n", " / "))
+            self._queue.put(("failed", str(e)))
+        except Exception as e:  # noqa: BLE001
+            self._log(f"[導入] 失敗: {type(e).__name__}: {e}")
+            self._queue.put(("failed", f"{type(e).__name__}: {e}"))
+
+    def _request_stop(self):
+        """中止(メイン画面を閉じるときにも呼ばれる)"""
+        if self._busy():
+            self._stop = True
+            self.status_var.set("中止しています...")
+
+    def _poll(self):
+        if self._closed:
+            return
+        try:
+            while True:
+                kind, *rest = self._queue.get_nowait()
+                if kind == "log":
+                    self._write_log(rest[0])
+                elif kind == "rows":
+                    self._show_rows(rest[0])
+                elif kind == "progress":
+                    done, total = rest
+                    if total:
+                        self.progress.configure(value=done * 100.0 / total)
+                        self.status_var.set(f"ダウンロードしています... {done // (1024 * 1024)} / {total // (1024 * 1024)} MB")
+                    else:
+                        self.status_var.set(f"ダウンロードしています... {done // (1024 * 1024)} MB")
+                elif kind == "finish":
+                    self.status_var.set(rest[0])
+                elif kind == "installed":
+                    self.progress.configure(value=100 if rest[0] else 0)
+                    self._after_install()
+                elif kind == "failed":
+                    self.progress.configure(value=0)
+                    self.status_var.set("入れられませんでした(下のログを見てください。もう一度押すと、やりなおせます)")
+                    if rest[0] != "中止しました":
+                        messagebox.showerror("環境セットアップ", "入れられませんでした。\n\n" + rest[0], parent=self)
+        except queue.Empty:
+            pass
+        if not self._busy():
+            self._set_busy(False)
+        self.after(150, self._poll)
+
+    def _after_install(self):
+        """入れおわったら、一覧を調べなおし、本体にも「ffmpeg が使えるようになった」ことを伝える"""
+        try:
+            threading.Thread(target=self._refresh_app_encoders, daemon=True).start()
+        except Exception:  # noqa: BLE001
+            pass
+        self._worker = None
+        self.recheck()
+
+    def _refresh_app_encoders(self):
+        try:
+            self.app._encoder_avail_ready(force=True)
+            self.app.after(0, self.app._apply_active_encoder)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _close(self):
+        if self._busy() and not self._stop:
+            if not messagebox.askyesno("確認", "処理の途中です。中止して閉じますか?", parent=self):
+                return
+            self._stop = True
+        self._closed = True
+        self.destroy()
+
+
 class AspectFixWindow(tk.Toplevel):
     """
     変換済みのmkv/mp4の縦横比(表示アスペクト比)だけを、再エンコードせずに書き換える。
@@ -7391,6 +7976,7 @@ class App(tk.Tk):
         tool_menu.add_command(label="変換済みm2tsを削除...", command=self._delete_converted_m2ts)
         delete_converted_index = tool_menu.index("end")
         tool_menu.add_separator()
+        tool_menu.add_command(label="環境セットアップ...", command=self._open_env_setup)
         tool_menu.add_command(label="プラグインフォルダを開く", command=self._open_plugins_folder)
         menubar.add_cascade(label="ツール", menu=tool_menu)
         # 項目の番号は、足した直後に取る(項目を増やしても、ずれないように)
@@ -7797,6 +8383,18 @@ class App(tk.Tk):
         except tk.TclError:
             pass
         self._media_win = MediaToolWindow(self)
+
+    def _open_env_setup(self):
+        """環境セットアップのウインドウ(開いていれば前面に出す)"""
+        win = getattr(self, "_env_setup_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+        except tk.TclError:
+            pass
+        self._env_setup_win = EnvSetupWindow(self)
 
     def _open_aspect_fix(self):
         """縦横比を直すウインドウ(開いていれば前面に出す)"""
