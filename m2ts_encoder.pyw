@@ -3282,7 +3282,7 @@ class LogTeeQueue(queue.Queue):
             pass
 
 
-APP_VERSION = "2026.11.23.1"
+APP_VERSION = "2026.11.24.1"
 UPDATE_BASE_URL = "https://raw.githubusercontent.com/tatata17/m2ts-encoder/main/"
 UPDATE_INFO_FILE = "version.json"
 UPDATE_BACKUP_KEEP = 5
@@ -7426,10 +7426,55 @@ def open_folder_in_explorer(folder: str) -> None:
     os.startfile(real if os.path.isdir(real) else folder)  # type: ignore[attr-defined]
 
 
+def _plugin_file_names(folder: str) -> List[str]:
+    """フォルダの中のプラグイン(*.py)を、ファイル名の順に"""
+    try:
+        return sorted(n for n in os.listdir(folder) if n.lower().endswith(".py") and os.path.isfile(os.path.join(folder, n)))
+    except OSError:
+        return []
+
+
+def find_store_python_plugin_dirs(local_app_data: Optional[str] = None) -> List[str]:
+    """
+    Microsoft Store 版の Python で起動していたときの plugins フォルダ(*.py が入っているものだけ。新しい順)。
+    Store 版の Python は、%LOCALAPPDATA% への書きこみを、Python 専用の場所
+    (%LOCALAPPDATA%/Packages/PythonSoftwareFoundation.Python.*/LocalCache/Local)へ振りかえる。
+    そのため、あとから通常版の Python で起動すると、置いたはずのプラグインが見えなくなる。
+    """
+    if sys.platform != "win32" and local_app_data is None:
+        return []
+    base = local_app_data or os.environ.get("LOCALAPPDATA") or ""
+    packages = os.path.join(base, "Packages")
+    found = []
+    try:
+        names = os.listdir(packages)
+    except OSError:
+        return []
+    for name in names:
+        if not name.lower().startswith("pythonsoftwarefoundation.python."):
+            continue
+        folder = os.path.join(packages, name, "LocalCache", "Local", _NEW_APP_NAME, PLUGIN_DIR_NAME)
+        if _plugin_file_names(folder):
+            try:
+                found.append((os.path.getmtime(folder), folder))
+            except OSError:
+                found.append((0.0, folder))
+    return [folder for _mtime, folder in sorted(found, reverse=True)]
+
+
 def get_plugins_dir() -> str:
-    """プラグインを置くフォルダ(無ければ作る)"""
+    """
+    プラグインを置くフォルダ(無ければ作る)。
+    ふつうは %LOCALAPPDATA%/m2ts_encoder/plugins。そこに *.py が1つも無く、Microsoft Store 版の Python の側に
+    プラグインが残っているときは、そちらを使う(Python を入れかえても、置いたプラグインがそのまま動くように)。
+    """
     path = os.path.join(get_app_data_dir(), PLUGIN_DIR_NAME)
     os.makedirs(path, exist_ok=True)
+    if not _plugin_file_names(path):
+        own = os.path.normcase(os.path.realpath(path))
+        for other in find_store_python_plugin_dirs():
+            if os.path.normcase(os.path.realpath(other)) != own:
+                return other
     return path
 
 
@@ -7686,6 +7731,8 @@ class App(tk.Tk):
         try:
             folder = get_plugins_dir()
             names = sorted(n for n in os.listdir(folder) if n.lower().endswith(".py") and os.path.isfile(os.path.join(folder, n)))
+            if names and os.path.normcase(folder) != os.path.normcase(os.path.join(get_app_data_dir(), PLUGIN_DIR_NAME)):
+                self._append_log(f"[プラグイン] Microsoft Store 版の Python で使っていたフォルダから読み込みます: {folder}")
         except Exception as e:
             self._append_log(f"[プラグイン] プラグインフォルダを読めませんでした: {e}")
             return

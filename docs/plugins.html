@@ -257,7 +257,7 @@ footer{border-top:1px solid var(--line);margin-top:60px;padding:22px 0;color:var
   </ol>
   <p>外すときは、フォルダからファイルを消して(または別の場所へ移して)、アプリを起動しなおします。</p>
   <p class="note"><b class="lb">ヒント</b>プラグインを書きかえたときも、「再起動」で読み直せます。動いているアプリの中でプラグインだけを読み直すしくみは、ありません。プラグインが足したメニューや、動かしている処理を確実に片づけるには、起動しなおすのが安全だからです。</p>
-  <p class="note"><b class="lb">補足</b>フォルダは、メニューから開くのが確実です。Python の入れかたによっては、実際の場所が <code>%LOCALAPPDATA%\m2ts_encoder\plugins</code> とは別のフォルダになることがあります。</p>
+  <p class="note"><b class="lb">補足</b>フォルダは、メニューから開くのが確実です。Python の入れかたによっては、実際の場所が <code>%LOCALAPPDATA%\m2ts_encoder\plugins</code> とは別のフォルダになることがあります(Microsoft Store 版の Python は、Python 専用の場所に置きます)。Store 版から通常版の Python に入れかえたときは、通常の plugins フォルダが空なら、Store 版の側に残っているプラグインをそのまま読み込みます。通常のフォルダに <code>.py</code> を1つでも置くと、そちらが使われます。</p>
 </section>
 
 <section id="sample">
