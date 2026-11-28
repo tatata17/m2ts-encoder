@@ -6,7 +6,8 @@
 
 本体(m2ts_encoder.pyw)の APP_VERSION を読み、version.json(version / file / sha256 / notes)を書く。
 SHA-256 は、改行を LF にそろえた中身で計算する(アプリが更新のときに、同じ計算で照合する)。
-構文エラーがある・版番号が上がっていない・本体が小さすぎる、のどれかなら、何も書かずに止まる。
+構文エラーがある・版番号が上がっていない・本体が小さすぎる・自動テスト(tests/run_tests.py)に失敗した、
+のどれかなら、何も書かずに止まる。
 同じ本体でもう一度実行すると、同じ version.json になる。
 """
 import hashlib
@@ -14,6 +15,7 @@ import json
 import os
 import py_compile
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,6 +26,18 @@ MIN_SIZE = 100_000   # アプリ側は、これより小さいファイルを「
 
 def vkey(version):
     return tuple(int(x) for x in re.findall(r"\d+", str(version)))
+
+
+def run_tests():
+    """自動テストを実行する。1つでも失敗したら(テストが見つからないときも)、何も書かずに止まる"""
+    runner = ROOT / "tests" / "run_tests.py"
+    if not runner.is_file():
+        sys.exit("自動テスト(tests/run_tests.py)が見つかりません。テストなしでは公開しません(何も変えていません)")
+    print("自動テストを実行しています...", flush=True)
+    done = subprocess.run([sys.executable, str(runner)], cwd=str(ROOT))
+    if done.returncode != 0:
+        sys.exit("自動テストに失敗したので、止めました(version.json は変えていません)。\n"
+                 "上の「失敗したテスト」を直してから、もう一度実行してください")
 
 
 def main():
@@ -59,6 +73,7 @@ def main():
         # 版が下がる・同じ版なのに中身が違う、は止める(sha256 の無い古い version.json に、初めて付けるときは通す)
         if vkey(ver) < vkey(old["version"]) or (same_version and old.get("sha256") and sha != old["sha256"]):
             sys.exit(f"版番号が上がっていません (今 {old['version']})。APP_VERSION を上げてください")
+    run_tests()
     notes = args[0] if args else (str(old.get("notes", "")) if same_version else "")
     info = {"version": ver, "file": APP_FILE, "sha256": sha, "notes": notes}
 

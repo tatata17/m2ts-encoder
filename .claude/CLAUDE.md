@@ -14,7 +14,8 @@ m2ts-encoder / avs-maker / syncdub の3つの使い方ページは、同じデ�
 
 # 公開のしかた
 
-- `version.json` は手で書かず、`python tools/release.py "更新内容のひとこと"` で書き出す(本体の APP_VERSION と、改行をLFにそろえた本体の SHA-256 が入る。構文エラー・版番号が上がっていない、のときは止まる)。
+- `version.json` は手で書かず、`python tools/release.py "更新内容のひとこと"` で書き出す(本体の APP_VERSION と、改行をLFにそろえた本体の SHA-256 が入る。構文エラー・版番号が上がっていない・自動テスト(`python tests/run_tests.py`)に失敗した、のときは止まる)。
 - 本体を変えたら APP_VERSION を上げる。版番号を上げて公開するのは、その版で起動を確かめてから。
 - アプリは更新のとき、ダウンロードした本体を LF にそろえてから SHA-256 を照合する(`download_update_source`)。公開側とアプリ側の計算を、片方だけ変えない。
 - `*.pyw` と `*.py` は `.gitattributes` で LF に固定している。
+- 機能を足したり不具合を直したりしたら、`tests/` にそれを確かめる項目を足す。テストは一時フォルダの中だけで動かし、実際の設定・録画・出力にはさわらない(`tests/support.py`)。画面の見た目と実機の GPU・ffmpeg は、起動して確かめる。
