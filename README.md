@@ -5,6 +5,8 @@ Python(tkinter)で動く **`m2ts_encoder.pyw` 1つだけ** で動作します(�
 
 **👉 [使い方・更新履歴のページ](https://tatata17.github.io/m2ts-encoder/)**
 
+![m2ts エンコーダーのメイン画面](docs/img/screenshot.png)
+
 - 番組名・チャンネル・放送日を一覧表示(rplsinfo.exe で録画データから取得)
 - 「おまかせ」で、ファイルごとに音声・字幕・インターレース・放送局を自動判定してエンコード(HEVC / NVENC)
 - 複数ファイルを上から順に自動エンコード(キュー)。ログは自動保存
